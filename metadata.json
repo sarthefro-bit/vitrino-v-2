@@ -1,0 +1,6 @@
+{
+  "name": "Vitrino",
+  "description": "A smart vitrin/portfolio display app for nail technicians, built with React and Tailwind CSS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

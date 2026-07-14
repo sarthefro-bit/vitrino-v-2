@@ -1,0 +1,58 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+@import "@fontsource/vazirmatn/400.css";
+@import "@fontsource/vazirmatn/700.css";
+
+@theme {
+  --font-sans: "Vazirmatn", system-ui, -apple-system, sans-serif;
+}
+
+:root {
+  font-family: 'Vazirmatn', system-ui, sans-serif;
+  --primary-pink: #EC4899;
+  --primary-pink-hover: #DB2777;
+  --primary-pink-light: #FCE7F3;
+}
+
+/* Custom scrollbar hiding helper */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Base body style for beautiful soft background */
+body {
+  background-color: #F3F4F6;
+  margin: 0;
+  padding: 0;
+  color: #1F2937;
+}
+
+/* High fidelity phone frame styled container */
+.phone-mockup-wrapper {
+  background-color: #ffffff;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  border-radius: 32px;
+  border: 10px solid #111827;
+  width: 100%;
+  max-width: 420px;
+  height: 840px;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 640px) {
+  .phone-mockup-wrapper {
+    border-radius: 0;
+    border: none;
+    max-width: 100%;
+    height: 100vh;
+    box-shadow: none;
+  }
+}
