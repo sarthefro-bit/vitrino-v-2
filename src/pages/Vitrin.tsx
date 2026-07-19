@@ -13,9 +13,6 @@ import {
   Check, 
   X, 
   Calendar,
-  Smartphone,
-  Wifi,
-  BatteryMedium,
   Sparkles,
   Search,
   ArrowUpDown
@@ -75,24 +72,11 @@ export default function Vitrin() {
   const [selectedColorFilter, setSelectedColorFilter] = useState<string | null>(null);
   const [colorSearchQuery, setColorSearchQuery] = useState('');
 
-  // Status Bar live clock
-  const [currentTime, setCurrentTime] = useState('09:41');
-
   // Instagram direct reservation states
   const [instagramBookingDesign, setInstagramBookingDesign] = useState<Design | null>(null);
   const [copiedInstagramMessage, setCopiedInstagramMessage] = useState(false);
 
   useEffect(() => {
-    // Clock update
-    const updateTime = () => {
-      const now = new Date();
-      const hours = now.getHours().toString().padStart(2, '0');
-      const minutes = now.getMinutes().toString().padStart(2, '0');
-      setCurrentTime(`${hours}:${minutes}`);
-    };
-    updateTime();
-    const clockInterval = setInterval(updateTime, 60000);
-
     // Fetch Nail Tech profile & Designs
     (async () => {
       try {
@@ -108,8 +92,6 @@ export default function Vitrin() {
         setLoading(false);
       }
     })();
-
-    return () => clearInterval(clockInterval);
   }, [slug]);
 
   // Collect all non-color tags for general category selector
@@ -226,16 +208,6 @@ export default function Vitrin() {
     <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-0 sm:p-6" dir="rtl">
       
       <div className="phone-mockup-wrapper bg-neutral-50 flex flex-col relative text-[#1F2937] font-sans">
-        
-        {/* Status Bar */}
-        <div className="bg-white text-neutral-900 px-6 py-2.5 flex justify-between items-center text-xs font-semibold select-none z-40 shrink-0 border-b border-neutral-100">
-          <div>{currentTime}</div>
-          <div className="flex items-center gap-1.5">
-            <Smartphone className="w-3.5 h-3.5 opacity-80" />
-            <Wifi className="w-3.5 h-3.5 opacity-80" />
-            <BatteryMedium className="w-4 h-4 opacity-80" />
-          </div>
-        </div>
 
         {/* ============================================
             HEADER CONTROLS

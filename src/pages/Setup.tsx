@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { saveNailTech, addDesign } from '../lib/db';
+import { saveNailTech, addDesign, deleteDesign, ensureUniqueSlug } from '../lib/db';
 import { uploadImage } from '../lib/storage';
 import { hasSupabaseCredentials } from '../lib/supabaseClient';
 import type { NailTech, Design } from '../lib/db';
@@ -11,9 +11,6 @@ import {
   ChevronDown, 
   Check, 
   Info,
-  Smartphone,
-  Wifi,
-  BatteryMedium,
   ChevronRight,
   Instagram
 } from 'lucide-react';
@@ -198,24 +195,11 @@ export default function Setup() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingDesign, setUploadingDesign] = useState(false);
 
-  // Simulated live clock in Status Bar
-  const [currentTime, setCurrentTime] = useState('09:41');
-
   useEffect(() => {
     // 2.2-second Splash Screen delay
     const timer = setTimeout(() => {
       setShowSplash(false);
     }, 2200);
-
-    // Live clock update
-    const updateTime = () => {
-      const now = new Date();
-      const hours = now.getHours().toString().padStart(2, '0');
-      const minutes = now.getMinutes().toString().padStart(2, '0');
-      setCurrentTime(`${hours}:${minutes}`);
-    };
-    updateTime();
-    const clockInterval = setInterval(updateTime, 60000);
 
     // Load any existing profile from local storage if available
     const loadStoredDataTimer = setTimeout(() => {
@@ -255,7 +239,6 @@ export default function Setup() {
     return () => {
       clearTimeout(timer);
       clearTimeout(loadStoredDataTimer);
-      clearInterval(clockInterval);
     };
   }, []);
 
@@ -352,13 +335,16 @@ export default function Setup() {
 
       const minVal = parseInt(newDesign.min_price.replace(/,/g, '')) || 0;
       
+      // Order matters here: '۳۰ دقیقه' contains the character '۳', so it must
+      // be checked BEFORE the plain '۳' (hours) check, or every 30-minute
+      // design silently gets saved as 180 minutes (3 hours) instead of 30.
       let durationMins = 120; // default 2 hours
-      if (newDesign.duration.includes('۳')) durationMins = 180;
+      if (newDesign.duration.includes('۳۰')) durationMins = 30;
       else if (newDesign.duration.includes('۲.۵')) durationMins = 150;
-      else if (newDesign.duration.includes('۲')) durationMins = 120;
       else if (newDesign.duration.includes('۱.۵')) durationMins = 90;
+      else if (newDesign.duration.includes('۳')) durationMins = 180;
+      else if (newDesign.duration.includes('۲')) durationMins = 120;
       else if (newDesign.duration.includes('۱')) durationMins = 60;
-      else if (newDesign.duration.includes('۳۰')) durationMins = 30;
 
       const savedDesign = await addDesign({
         tech_id: currentTechId,
@@ -383,6 +369,11 @@ export default function Setup() {
         });
         setShowAddModal(false);
         setError('');
+      } else {
+        // addDesign() returns null when both Supabase AND the local
+        // storage fallback failed — most commonly because offline mode
+        // ran out of localStorage space (photos are stored as Base64).
+        setError('فضای ذخیره‌سازی مرورگر پر شده است. لطفاً یک تصویر با حجم کمتر امتحان کنید یا Supabase را متصل کنید.');
       }
     } catch (err) {
       console.error(err);
@@ -394,15 +385,19 @@ export default function Setup() {
 
   const handleDeleteDesign = async (designId: string) => {
     try {
-      const stored = localStorage.getItem('vitrino_designs');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        const filtered = parsed.filter((d: Design) => d.id !== designId);
-        localStorage.setItem('vitrino_designs', JSON.stringify(filtered));
+      // deleteDesign() handles both the Supabase row AND the local
+      // storage fallback internally — calling localStorage directly here
+      // used to leave the design alive in Supabase, so it kept showing
+      // up on the public vitrin page after being "deleted".
+      const success = await deleteDesign(designId);
+      if (success) {
         setDesigns(prev => prev.filter(d => d.id !== designId));
+      } else {
+        setError('خطا در حذف نمونه‌کار');
       }
     } catch (e) {
       console.error(e);
+      setError('خطا در حذف نمونه‌کار');
     }
   };
 
@@ -413,6 +408,10 @@ export default function Setup() {
     }
     if (!techInfo.mobile || !techInfo.mobile.trim()) {
       setError('شماره موبایل الزامی است');
+      return;
+    }
+    if (!/^09\d{9}$/.test(techInfo.mobile.trim())) {
+      setError('شماره موبایل معتبر نیست (مثال: ۰۹۱۲۱۲۳۴۵۶۷)');
       return;
     }
     if (!techInfo.city || !techInfo.city.trim()) {
@@ -430,8 +429,8 @@ export default function Setup() {
 
     setLoading(true);
     try {
-      const finalSlug = techInfo.slug || techInfo.name.toLowerCase().trim().replace(/\s+/g, '-');
-      
+      const finalSlug = await ensureUniqueSlug(techInfo.slug || techInfo.name, techId || undefined);
+
       const tech = await saveNailTech({
         id: techId || undefined,
         slug: finalSlug,
@@ -458,8 +457,8 @@ export default function Setup() {
   const handleCompleteRegistration = async () => {
     setLoading(true);
     try {
-      const finalSlug = techInfo.slug || techInfo.name?.toLowerCase().trim().replace(/\s+/g, '-') || 'profile';
-      
+      const finalSlug = await ensureUniqueSlug(techInfo.slug || techInfo.name || 'profile', techId || undefined);
+
       const tech = await saveNailTech({
         id: techId || undefined,
         slug: finalSlug,
@@ -511,16 +510,6 @@ export default function Setup() {
       
       <div className="phone-mockup-wrapper bg-neutral-50 flex flex-col relative text-[#1F2937] font-sans">
         
-        {/* Status Bar */}
-        <div className="bg-white text-neutral-900 px-6 py-2.5 flex justify-between items-center text-xs font-semibold select-none z-40 shrink-0 border-b border-neutral-100">
-          <div>{currentTime}</div>
-          <div className="flex items-center gap-1.5">
-            <Smartphone className="w-3.5 h-3.5 opacity-80" />
-            <Wifi className="w-3.5 h-3.5 opacity-80" />
-            <BatteryMedium className="w-4 h-4 opacity-80" />
-          </div>
-        </div>
-
         {/* ============================================
             SPLASH SCREEN COMPONENT
             ============================================ */}
@@ -845,7 +834,7 @@ export default function Setup() {
                 <button
                   type="button"
                   className="w-full py-4 bg-pink-50/20 border border-dashed border-[#EC4899] hover:bg-pink-50/50 rounded-[16px] flex flex-col items-center justify-center gap-1.5 transition-all text-center"
-                  onClick={() => setShowAddModal(true)}
+                  onClick={() => { setError(''); setShowAddModal(true); }}
                 >
                   <span className="text-[#EC4899] text-xs font-extrabold">+ افزودن نمونه‌کار</span>
                 </button>
@@ -965,8 +954,10 @@ export default function Setup() {
                 type="button"
                 className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-sm font-bold rounded-[16px] text-center transition-all cursor-pointer"
                 onClick={() => {
-                  const finalSlug = techInfo.slug || techInfo.name?.toLowerCase().trim().replace(/\s+/g, '-') || 'profile';
-                  navigate(`/vitrin/${finalSlug}`);
+                  // techInfo.slug is already the finalized, unique slug
+                  // saved by handleCompleteRegistration — don't recompute
+                  // a raw (possibly colliding) one here.
+                  navigate(`/vitrin/${techInfo.slug || 'profile'}`);
                 }}
               >
                 بزن بریم!
@@ -1199,6 +1190,12 @@ export default function Setup() {
                 </div>
 
               </div>
+
+              {error && (
+                <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold text-right border border-red-100 shrink-0">
+                  ⚠️ {error}
+                </div>
+              )}
 
               {/* Action Buttons (Strictly flat, 16px rounded) */}
               <div className="flex gap-3 pt-3 border-t border-neutral-100 shrink-0">

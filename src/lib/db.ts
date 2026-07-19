@@ -1,4 +1,4 @@
-import { supabase, hasSupabaseCredentials } from './supabaseClient';
+import { supabase, hasSupabaseCredentials, ensureAnonymousSession } from './supabaseClient';
 
 // ============================================
 // DATA MODELS
@@ -12,6 +12,7 @@ export interface NailTech {
   instagram: string;
   avatar_url: string;
   mobile?: string;
+  owner_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -24,6 +25,7 @@ export interface Design {
   tags: string[];
   price: number;
   duration: number;
+  owner_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -44,11 +46,15 @@ function getLocalTechs(): NailTech[] {
   }
 }
 
-function saveLocalTechs(techs: NailTech[]) {
+function saveLocalTechs(techs: NailTech[]): boolean {
   try {
     localStorage.setItem(TECHS_KEY, JSON.stringify(techs));
+    return true;
   } catch (err) {
-    console.error('Error saving local techs:', err);
+    // Most commonly QuotaExceededError — offline mode stores images as
+    // Base64, and the browser's ~5-10MB localStorage limit fills up fast.
+    console.error('Error saving local techs (storage may be full):', err);
+    return false;
   }
 }
 
@@ -61,12 +67,57 @@ function getLocalDesigns(): Design[] {
   }
 }
 
-function saveLocalDesigns(designs: Design[]) {
+function saveLocalDesigns(designs: Design[]): boolean {
   try {
     localStorage.setItem(DESIGNS_KEY, JSON.stringify(designs));
+    return true;
   } catch (err) {
-    console.error('Error saving local designs:', err);
+    console.error('Error saving local designs (storage may be full):', err);
+    return false;
   }
+}
+
+// ============================================
+// SLUG UTILITIES
+// ============================================
+
+/**
+ * Turn any text (including Persian salon names) into a safe URL slug.
+ * Keeps Persian/Arabic letters, latin letters, and digits; strips
+ * punctuation/emoji/slashes; collapses whitespace into single dashes.
+ */
+export function slugify(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^\u0600-\u06FFa-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Generate a slug that's guaranteed not to collide with another tech's
+ * vitrin. Without this, two salons with the same/similar name ended up
+ * with the exact same slug, and one profile silently shadowed the other.
+ */
+export async function ensureUniqueSlug(baseInput: string, excludeId?: string): Promise<string> {
+  let base = slugify(baseInput);
+  if (!base) base = crypto.randomUUID().slice(0, 8);
+
+  let candidate = base;
+  let counter = 2;
+
+  // Safety cap so a bug elsewhere can't spin this forever
+  for (let i = 0; i < 50; i++) {
+    const existing = await getNailTechBySlug(candidate);
+    if (!existing || existing.id === excludeId) {
+      return candidate;
+    }
+    candidate = `${base}-${counter}`;
+    counter++;
+  }
+  return `${base}-${crypto.randomUUID().slice(0, 4)}`;
 }
 
 // ============================================
@@ -82,8 +133,9 @@ export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'u
 
   if (hasSupabaseCredentials) {
     try {
+      await ensureAnonymousSession();
       if (id) {
-        // Update existing
+        // Update existing — RLS checks auth.uid() = owner_id on the row
         const { data: result, error } = await supabase
           .from('nail_techs')
           .update({
@@ -104,6 +156,7 @@ export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'u
       } else {
         // Insert new
         const newId = crypto.randomUUID();
+        const { data: userData } = await supabase.auth.getUser();
         const { data: result, error } = await supabase
           .from('nail_techs')
           .insert({
@@ -114,6 +167,7 @@ export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'u
             instagram,
             avatar_url,
             mobile,
+            owner_id: userData?.user?.id,
           })
           .select()
           .single();
@@ -142,8 +196,7 @@ export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'u
         updated_at: now,
       };
       techs[index] = updated;
-      saveLocalTechs(techs);
-      return updated;
+      return saveLocalTechs(techs) ? updated : null;
     }
   }
 
@@ -161,8 +214,7 @@ export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'u
     updated_at: now,
   };
   techs.push(newTech);
-  saveLocalTechs(techs);
-  return newTech;
+  return saveLocalTechs(techs) ? newTech : null;
 }
 
 /**
@@ -229,6 +281,8 @@ export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'update
 
   if (hasSupabaseCredentials) {
     try {
+      await ensureAnonymousSession();
+      const { data: userData } = await supabase.auth.getUser();
       const { data: result, error } = await supabase
         .from('designs')
         .insert({
@@ -239,6 +293,7 @@ export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'update
           tags,
           price,
           duration,
+          owner_id: userData?.user?.id,
         })
         .select()
         .single();
@@ -264,8 +319,7 @@ export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'update
     updated_at: now,
   };
   designs.push(newDesign);
-  saveLocalDesigns(designs);
-  return newDesign;
+  return saveLocalDesigns(designs) ? newDesign : null;
 }
 
 /**
@@ -324,6 +378,7 @@ export async function updateDesign(designId: string, updatedData: Partial<Omit<D
 
   if (hasSupabaseCredentials) {
     try {
+      await ensureAnonymousSession();
       const { data, error } = await supabase
         .from('designs')
         .update({
@@ -362,6 +417,7 @@ export async function updateDesign(designId: string, updatedData: Partial<Omit<D
 export async function deleteDesign(designId: string): Promise<boolean> {
   if (hasSupabaseCredentials) {
     try {
+      await ensureAnonymousSession();
       const { error } = await supabase
         .from('designs')
         .delete()

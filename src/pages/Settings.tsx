@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { hasSupabaseCredentials } from '../lib/supabaseClient';
 import { 
@@ -9,9 +9,6 @@ import {
   Database, 
   Sparkles, 
   FileText, 
-  Smartphone,
-  Wifi,
-  BatteryMedium,
   Info
 } from 'lucide-react';
 
@@ -19,21 +16,6 @@ export default function Settings() {
   const navigate = useNavigate();
   const [showConfirm, setShowConfirm] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
-
-  // Status Bar live clock
-  const [currentTime, setCurrentTime] = useState('09:41');
-
-  useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      const hours = now.getHours().toString().padStart(2, '0');
-      const minutes = now.getMinutes().toString().padStart(2, '0');
-      setCurrentTime(`${hours}:${minutes}`);
-    };
-    updateTime();
-    const clockInterval = setInterval(updateTime, 60000);
-    return () => clearInterval(clockInterval);
-  }, []);
 
   const handleResetData = () => {
     localStorage.removeItem('vitrino_nail_techs');
@@ -54,6 +36,7 @@ CREATE TABLE IF NOT EXISTS public.nail_techs (
     instagram TEXT,
     avatar_url TEXT,
     mobile TEXT,
+    owner_id UUID REFERENCES auth.users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -69,9 +52,15 @@ CREATE TABLE IF NOT EXISTS public.designs (
     tags TEXT[] DEFAULT '{}'::TEXT[],
     price NUMERIC DEFAULT 0,
     duration NUMERIC DEFAULT 0,
+    owner_id UUID REFERENCES auth.users(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- If you already ran an older version of this script, run these two lines
+-- once to add ownership to your existing tables:
+-- ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
+-- ALTER TABLE public.designs ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES auth.users(id);
 
 -- ============================================
 -- 3. Enable Row Level Security (RLS)
@@ -80,19 +69,40 @@ ALTER TABLE public.nail_techs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.designs ENABLE ROW LEVEL SECURITY;
 
 -- ============================================
--- 4. Create Security Policies for Public Access
+-- 4. Security Policies
+-- Anyone can READ (the vitrin page is public), but only the browser
+-- session that CREATED a profile/design can edit or delete it.
+-- This app signs every visitor in anonymously (supabase.auth.signInAnonymously)
+-- so auth.uid() is stable per-device without needing a real login.
+-- NOTE: enable "Anonymous Sign-Ins" in Supabase Dashboard -> Authentication
+-- -> Providers, or these policies will block all writes.
 -- ============================================
+DROP POLICY IF EXISTS "Allow all write access to nail_techs" ON public.nail_techs;
+DROP POLICY IF EXISTS "Allow all write access to designs" ON public.designs;
+
 CREATE POLICY "Allow public read access to nail_techs" 
 ON public.nail_techs FOR SELECT USING (true);
 
 CREATE POLICY "Allow public read access to designs" 
 ON public.designs FOR SELECT USING (true);
 
-CREATE POLICY "Allow all write access to nail_techs" 
-ON public.nail_techs FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Owners can insert their own nail_techs"
+ON public.nail_techs FOR INSERT WITH CHECK (auth.uid() = owner_id);
 
-CREATE POLICY "Allow all write access to designs" 
-ON public.designs FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Owners can update their own nail_techs"
+ON public.nail_techs FOR UPDATE USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Owners can delete their own nail_techs"
+ON public.nail_techs FOR DELETE USING (auth.uid() = owner_id);
+
+CREATE POLICY "Owners can insert their own designs"
+ON public.designs FOR INSERT WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Owners can update their own designs"
+ON public.designs FOR UPDATE USING (auth.uid() = owner_id) WITH CHECK (auth.uid() = owner_id);
+
+CREATE POLICY "Owners can delete their own designs"
+ON public.designs FOR DELETE USING (auth.uid() = owner_id);
 
 -- ============================================
 -- 5. Storage Buckets Setup (Avatars & Designs)
@@ -107,18 +117,24 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ============================================
 -- 6. Storage Security Policies for Objects
+-- Read is public; only authenticated (incl. anonymous) sessions can upload.
 -- ============================================
+DROP POLICY IF EXISTS "Allow all uploads to avatars" ON storage.objects;
+DROP POLICY IF EXISTS "Allow all uploads to designs" ON storage.objects;
+
 CREATE POLICY "Allow public access to avatars" 
 ON storage.objects FOR SELECT USING (bucket_id = 'avatars');
 
-CREATE POLICY "Allow all uploads to avatars" 
-ON storage.objects FOR ALL USING (bucket_id = 'avatars') WITH CHECK (bucket_id = 'avatars');
+CREATE POLICY "Allow authenticated uploads to avatars" 
+ON storage.objects FOR ALL USING (bucket_id = 'avatars' AND auth.role() = 'authenticated') 
+WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
 
 CREATE POLICY "Allow public access to designs" 
 ON storage.objects FOR SELECT USING (bucket_id = 'designs');
 
-CREATE POLICY "Allow all uploads to designs" 
-ON storage.objects FOR ALL USING (bucket_id = 'designs') WITH CHECK (bucket_id = 'designs');
+CREATE POLICY "Allow authenticated uploads to designs" 
+ON storage.objects FOR ALL USING (bucket_id = 'designs' AND auth.role() = 'authenticated') 
+WITH CHECK (bucket_id = 'designs' AND auth.role() = 'authenticated');
 `;
 
   const handleCopySql = () => {
@@ -132,16 +148,6 @@ ON storage.objects FOR ALL USING (bucket_id = 'designs') WITH CHECK (bucket_id =
       
       <div className="phone-mockup-wrapper bg-neutral-50 flex flex-col relative text-[#1F2937] font-sans">
         
-        {/* Status Bar */}
-        <div className="bg-white/85 backdrop-blur-md text-neutral-900 px-6 py-2.5 flex justify-between items-center text-xs font-semibold select-none z-40 shrink-0 border-b border-neutral-100">
-          <div>{currentTime}</div>
-          <div className="flex items-center gap-1.5">
-            <Smartphone className="w-3.5 h-3.5 opacity-80" />
-            <Wifi className="w-3.5 h-3.5 opacity-80" />
-            <BatteryMedium className="w-4 h-4 opacity-80" />
-          </div>
-        </div>
-
         {/* Header bar */}
         <div className="bg-white px-4 py-3 flex justify-between items-center border-b border-neutral-100 shrink-0 z-10 shadow-sm">
           <button 
