@@ -1,9 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Replace these with your actual Supabase credentials
 const rawUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_URL = rawUrl && !rawUrl.startsWith('http') ? `https://${rawUrl}` : rawUrl;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+// Supabase now issues "publishable" keys (sb_publishable_...); legacy anon JWT keys still work
+const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  '';
 
 const isConfigured = !!SUPABASE_URL && !!SUPABASE_ANON_KEY;
 
