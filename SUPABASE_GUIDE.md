@@ -1,223 +1,92 @@
-# 🚀 Supabase Integration Guide
+# Vitrino Supabase Setup & Troubleshooting Guide
 
-## Step 1: Configure Environment Variables
+This guide explains how Supabase integration works in Vitrino, how to resolve `nail_techs` table persistence issues, and how to use the secret diagnostic backlog panel.
 
-Edit `.env.local` with your Supabase credentials:
+---
+
+## 1. Environment Variables Configuration
+
+Ensure your `.env` file contains the required Supabase credentials:
 
 ```env
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key-here
+VITE_SUPABASE_URL=https://your-supabase-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+# VITE_SUPABASE_ANON_KEY is also supported as an alias
 ```
-
-Get these from: **Supabase Dashboard → Settings → API**
 
 ---
 
-## Step 2: Database Schema
+## 2. Master SQL Fix Script for `nail_techs` & `designs`
 
-Your Supabase tables should have this structure:
+If data is not persisting to Supabase, run this script in your **Supabase Dashboard -> SQL Editor**:
 
-### `nail_techs` Table
 ```sql
-id (uuid, primary key)
-slug (text, unique)
-name (text)
-city (text)
-instagram (text)
-avatar_url (text)
-created_at (timestamp)
-updated_at (timestamp)
-```
+-- 1. Create nail_techs Table
+CREATE TABLE IF NOT EXISTS public.nail_techs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE,
+    password_hash TEXT DEFAULT '123456',
+    name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    instagram TEXT,
+    whatsapp TEXT,
+    telegram TEXT,
+    avatar_url TEXT,
+    mobile TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-### `designs` Table
-```sql
-id (uuid, primary key)
-tech_id (uuid, foreign key → nail_techs.id)
-title (text)
-image_url (text)
-tags (text[], array)
-price (integer)
-duration (integer)
-created_at (timestamp)
-updated_at (timestamp)
-```
+-- 2. Create designs Table
+CREATE TABLE IF NOT EXISTS public.designs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tech_id UUID REFERENCES public.nail_techs(id) ON DELETE CASCADE NOT NULL,
+    title TEXT NOT NULL,
+    image_url TEXT NOT NULL,
+    tags TEXT[] DEFAULT '{}'::TEXT[],
+    price NUMERIC DEFAULT 0,
+    duration NUMERIC DEFAULT 60,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
-### Storage Buckets (Public)
-- `avatars` — For profile pictures
-- `designs` — For design portfolio images
+-- 3. Enable RLS
+ALTER TABLE public.nail_techs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.designs ENABLE ROW LEVEL SECURITY;
 
----
+-- 4. Set RLS Policies for Public Access
+DROP POLICY IF EXISTS "Public Select Nail Techs" ON public.nail_techs;
+CREATE POLICY "Public Select Nail Techs" ON public.nail_techs FOR SELECT USING (true);
 
-## Step 3: Usage Examples
+DROP POLICY IF EXISTS "Public Upsert Nail Techs" ON public.nail_techs;
+CREATE POLICY "Public Upsert Nail Techs" ON public.nail_techs FOR ALL USING (true) WITH CHECK (true);
 
-### Save Nail Tech Profile
+DROP POLICY IF EXISTS "Public Select Designs" ON public.designs;
+CREATE POLICY "Public Select Designs" ON public.designs FOR SELECT USING (true);
 
-```typescript
-import { saveNailTech } from '@/lib/db';
-import { uploadImage } from '@/lib/storage';
+DROP POLICY IF EXISTS "Public Insert Designs" ON public.designs;
+CREATE POLICY "Public Insert Designs" ON public.designs FOR ALL USING (true) WITH CHECK (true);
 
-// Upload avatar
-const avatarUrl = await uploadImage(avatarFile, 'avatars', 'tech-123');
+-- 5. Storage Buckets Setup
+INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true) ON CONFLICT (id) DO NOTHING;
+INSERT INTO storage.buckets (id, name, public) VALUES ('designs', 'designs', true) ON CONFLICT (id) DO NOTHING;
 
-// Save profile
-const tech = await saveNailTech({
-  slug: 'fatima-nailer',
-  name: 'فاطیما',
-  city: 'تهران',
-  instagram: '@fatima_nails',
-  avatar_url: avatarUrl || '',
-});
-
-console.log('✅ Profile saved:', tech);
-```
-
----
-
-### Add Design to Portfolio
-
-```typescript
-import { addDesign } from '@/lib/db';
-import { uploadImage } from '@/lib/storage';
-
-// Upload design image
-const imageUrl = await uploadImage(designFile, 'designs', 'tech-123');
-
-// Add to portfolio
-const design = await addDesign({
-  tech_id: 'tech-uuid-here',
-  title: 'ناخن‌های صورتی',
-  image_url: imageUrl || '',
-  tags: ['صورتی', 'ساده', 'تابستانی'],
-  price: 150000,
-  duration: 45,
-});
-
-console.log('✅ Design added:', design);
+-- 6. Storage Policies
+DROP POLICY IF EXISTS "Public Avatars Access" ON storage.objects;
+CREATE POLICY "Public Avatars Access" ON storage.objects FOR ALL USING (bucket_id IN ('avatars', 'designs')) WITH CHECK (bucket_id IN ('avatars', 'designs'));
 ```
 
 ---
 
-### Fetch Public Vitrin
+## 3. Secret Diagnostic Backlog Page
 
-```typescript
-import { getNailTechBySlug, getDesigns } from '@/lib/db';
+Access the secret diagnostic dashboard at:
 
-// Get nail tech by slug (for public vitrin)
-const tech = await getNailTechBySlug('fatima-nailer');
+`http://<your-app-domain>/secret-admin`
 
-if (tech) {
-  // Get all designs
-  const designs = await getDesigns(tech.id);
-  console.log(`📋 ${designs.length} designs found`);
-}
-```
-
----
-
-### Update Design
-
-```typescript
-import { updateDesign } from '@/lib/db';
-
-const updated = await updateDesign('design-id', {
-  title: 'ناخن‌های صورتی (ویرایش‌شده)',
-  price: 200000,
-});
-```
-
----
-
-### Delete Design
-
-```typescript
-import { deleteDesign } from '@/lib/db';
-import { deleteImage } from '@/lib/storage';
-
-// Delete from database
-const deleted = await deleteDesign('design-id');
-
-// Delete image from storage
-if (deleted) {
-  await deleteImage('designs', 'tech-123/old-image.jpg');
-}
-```
-
----
-
-## Step 4: Update Your React Components
-
-### Example: Setup.tsx
-
-```typescript
-import { useState } from 'react';
-import { saveNailTech, addDesign } from '@/lib/db';
-import { uploadImage } from '@/lib/storage';
-
-export default function Setup() {
-  const [loading, setLoading] = useState(false);
-  const [techId, setTechId] = useState<string | null>(null);
-
-  const handleSaveProfile = async (formData) => {
-    setLoading(true);
-    try {
-      const avatarUrl = await uploadImage(formData.avatarFile, 'avatars');
-      
-      const tech = await saveNailTech({
-        slug: formData.slug,
-        name: formData.name,
-        city: formData.city,
-        instagram: formData.instagram,
-        avatar_url: avatarUrl || '',
-      });
-
-      if (tech) {
-        setTechId(tech.id);
-        console.log('✅ Profile saved!');
-      }
-    } catch (error) {
-      console.error('❌ Error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return <div>/* Your form here */</div>;
-}
-```
-
----
-
-## Step 5: Error Handling
-
-All functions include `try-catch` blocks and log errors to console. In production, handle errors gracefully:
-
-```typescript
-const tech = await getNailTechBySlug('slug');
-
-if (!tech) {
-  // Show error message to user
-  setError('پروفایل یافت نشد');
-  return;
-}
-```
-
----
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| `.env.local` not loaded | Restart dev server: `npm run dev` |
-| 401 Unauthorized | Check `VITE_SUPABASE_ANON_KEY` |
-| Storage permission denied | Make sure buckets are set to **Public** in Supabase |
-| Image upload fails | Check file size (max 5MB) and type (JPEG, PNG, WebP, GIF) |
-
----
-
-## 🎯 Next Steps
-
-1. ✅ Set up `.env.local` with your credentials
-2. ✅ Create database tables and buckets in Supabase
-3. ✅ Update Setup.tsx to use `saveNailTech()` and `uploadImage()`
-4. ✅ Update Vitrin.tsx to fetch data with `getNailTechBySlug()` and `getDesigns()`
-5. ✅ Test in browser: `npm run dev`
+Features:
+- Live Supabase connection test & table health report.
+- Real-time event log backlog for all database queries and storage operations.
+- 1-Click SQL fix copy button.
+- Local vs Cloud record count comparison.

@@ -1,6 +1,6 @@
 import { supabase, hasSupabaseCredentials } from './supabaseClient';
+import { addLog } from './logger';
 
-// Helper to convert File to Base64
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -10,12 +10,8 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-// ============================================
-// IMAGE UPLOAD UTILITY
-// ============================================
-
 /**
- * Upload an image file to Supabase Storage and return the public URL, or Base64 as fallback
+ * Upload an image file to Supabase Storage and return public URL, or Base64 as fallback
  */
 export async function uploadImage(
   file: File,
@@ -23,71 +19,59 @@ export async function uploadImage(
   folderPath: string = ''
 ): Promise<string | null> {
   try {
-    // Validate file
     if (!file) {
-      throw new Error('❌ No file provided');
+      throw new Error('فایلی برای آپلود انتخاب نشده است');
     }
 
-    // Allowed image types
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!allowedTypes.includes(file.type)) {
-      throw new Error('❌ Invalid file type. Only JPEG, PNG, WebP, and GIF are allowed.');
+      throw new Error('فرمت فایل مجاز نیست. فقط تصویر JPEG, PNG, WebP و GIF پشتیبانی می‌شود.');
     }
 
-    // Max file size: 5MB
-    const MAX_FILE_SIZE = 5 * 1024 * 1024;
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
     if (file.size > MAX_FILE_SIZE) {
-      throw new Error('❌ File size exceeds 5MB limit');
+      throw new Error('حجم تصویر نباید بیشتر از ۵ مگابایت باشد.');
     }
 
     if (hasSupabaseCredentials) {
       try {
-        // Generate unique filename
         const timestamp = Date.now();
         const randomId = crypto.randomUUID().slice(0, 8);
         const ext = file.name.split('.').pop() || 'jpg';
         const filename = `${timestamp}-${randomId}.${ext}`;
-
-        // Build full path
         const fullPath = folderPath ? `${folderPath}/${filename}` : filename;
 
-        // Upload to Supabase Storage
         const { error } = await supabase.storage
           .from(bucketName)
-          .upload(fullPath, file);
+          .upload(fullPath, file, { upsert: true });
 
         if (!error) {
-          // Get public URL
           const { data: publicData } = supabase.storage
             .from(bucketName)
             .getPublicUrl(fullPath);
 
           const publicUrl = publicData?.publicUrl;
-
           if (publicUrl) {
-            console.log(`✅ Image uploaded successfully to Supabase: ${publicUrl}`);
+            addLog('success', 'storage', `تصویر با موفقیت در Supabase (${bucketName}) ذخیره شد.`, { url: publicUrl });
             return publicUrl;
           }
         } else {
-          console.warn('Supabase storage upload error, falling back to local base64:', error);
+          addLog('warn', 'storage', `خطا در آپلود تصویر به باکت Supabase (${bucketName}): ${error.message}. انتقال به Base64 محلی.`, error);
         }
       } catch (err) {
-        console.warn('Supabase storage upload failed, falling back to local base64:', err);
+        addLog('warn', 'storage', `استثنا در آپلود به Supabase Storage. انتقال به Base64 محلی.`, err);
       }
     }
 
     // Local Base64 Fallback
-    console.log('Using local offline Base64 image fallback.');
+    addLog('info', 'storage', 'استفاده از فرمت Base64 محلی جهت ذخیره‌سازی تصویر.');
     return await fileToBase64(file);
   } catch (error) {
-    console.error('❌ Error uploading image:', error);
+    addLog('error', 'storage', 'خطا در آپلود تصویر', error);
     return null;
   }
 }
 
-/**
- * Delete an image from Supabase Storage
- */
 export async function deleteImage(
   bucketName: 'avatars' | 'designs',
   filePath: string
@@ -99,37 +83,12 @@ export async function deleteImage(
         .remove([filePath]);
 
       if (error) throw error;
-
-      console.log(`✅ Image deleted successfully: ${filePath}`);
+      addLog('info', 'storage', `تصویر با موفقیت از باکت Supabase حذف شد: ${filePath}`);
       return true;
     } catch (error) {
-      console.error('❌ Error deleting image:', error);
+      addLog('warn', 'storage', `خطا در حذف تصویر از Supabase`, error);
       return false;
     }
   }
   return true;
-}
-
-/**
- * Get a signed URL for a private image
- */
-export async function getSignedUrl(
-  bucketName: 'avatars' | 'designs',
-  filePath: string,
-  expiresIn: number = 3600
-): Promise<string | null> {
-  if (hasSupabaseCredentials && !filePath.startsWith('data:image')) {
-    try {
-      const { data, error } = await supabase.storage
-        .from(bucketName)
-        .createSignedUrl(filePath, expiresIn);
-
-      if (error) throw error;
-      return data?.signedUrl || null;
-    } catch (error) {
-      console.error('❌ Error creating signed URL:', error);
-      return null;
-    }
-  }
-  return filePath;
 }

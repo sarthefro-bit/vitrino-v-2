@@ -1,4 +1,5 @@
-import { supabase, hasSupabaseCredentials, ensureAnonymousSession } from './supabaseClient';
+import { supabase, hasSupabaseCredentials } from './supabaseClient';
+import { addLog } from './logger';
 
 // ============================================
 // DATA MODELS
@@ -7,12 +8,15 @@ import { supabase, hasSupabaseCredentials, ensureAnonymousSession } from './supa
 export interface NailTech {
   id: string;
   slug: string;
+  username: string;
+  password_hash?: string;
   name: string;
   city: string;
   instagram: string;
+  whatsapp?: string;
+  telegram?: string;
   avatar_url: string;
-  mobile?: string;
-  owner_id?: string;
+  mobile: string;
   created_at: string;
   updated_at: string;
 }
@@ -24,20 +28,61 @@ export interface Design {
   image_url: string;
   tags: string[];
   price: number;
-  duration: number;
-  owner_id?: string;
+  duration: number; // in minutes
   created_at: string;
   updated_at: string;
 }
 
+// Global runtime diagnostic flags
+export let lastCloudError: string | null = null;
+export let isCloudFallbackActive = false;
+
 // ============================================
-// LOCAL STORAGE UTILITIES
+// SESSION MANAGERS
+// ============================================
+
+const SESSION_KEY = 'vitrino_active_user_session';
+
+export function getCurrentUserSession(): { id: string; username: string; slug: string } | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCurrentUserSession(tech: NailTech): void {
+  try {
+    const sessionData = {
+      id: tech.id,
+      username: tech.username || tech.slug,
+      slug: tech.slug,
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+    addLog('info', 'auth', `ورود موفق کاربر: ${tech.name} (${tech.username || tech.slug})`);
+  } catch (e) {
+    console.error('Failed to set session:', e);
+  }
+}
+
+export function logoutUserSession(): void {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+    addLog('info', 'auth', 'خروج کاربر از سیستم');
+  } catch (e) {
+    console.error('Failed to logout session:', e);
+  }
+}
+
+// ============================================
+// LOCAL STORAGE PERSISTENCE UTILITIES
 // ============================================
 
 const TECHS_KEY = 'vitrino_nail_techs';
 const DESIGNS_KEY = 'vitrino_designs';
 
-function getLocalTechs(): NailTech[] {
+export function getLocalTechs(): NailTech[] {
   try {
     const data = localStorage.getItem(TECHS_KEY);
     return data ? JSON.parse(data) : [];
@@ -46,19 +91,15 @@ function getLocalTechs(): NailTech[] {
   }
 }
 
-function saveLocalTechs(techs: NailTech[]): boolean {
+export function saveLocalTechs(techs: NailTech[]): void {
   try {
     localStorage.setItem(TECHS_KEY, JSON.stringify(techs));
-    return true;
   } catch (err) {
-    // Most commonly QuotaExceededError — offline mode stores images as
-    // Base64, and the browser's ~5-10MB localStorage limit fills up fast.
-    console.error('Error saving local techs (storage may be full):', err);
-    return false;
+    console.error('Error saving local techs:', err);
   }
 }
 
-function getLocalDesigns(): Design[] {
+export function getLocalDesigns(): Design[] {
   try {
     const data = localStorage.getItem(DESIGNS_KEY);
     return data ? JSON.parse(data) : [];
@@ -67,264 +108,336 @@ function getLocalDesigns(): Design[] {
   }
 }
 
-function saveLocalDesigns(designs: Design[]): boolean {
+export function saveLocalDesigns(designs: Design[]): void {
   try {
     localStorage.setItem(DESIGNS_KEY, JSON.stringify(designs));
-    return true;
   } catch (err) {
-    console.error('Error saving local designs (storage may be full):', err);
-    return false;
+    console.error('Error saving local designs:', err);
   }
 }
 
 // ============================================
-// SLUG UTILITIES
+// DEFAULT SEED DATA IF EMPTY
 // ============================================
 
-/**
- * Turn any text (including Persian salon names) into a safe URL slug.
- * Keeps Persian/Arabic letters, latin letters, and digits; strips
- * punctuation/emoji/slashes; collapses whitespace into single dashes.
- */
-export function slugify(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^\u0600-\u06FFa-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-/**
- * Generate a slug that's guaranteed not to collide with another tech's
- * vitrin. Without this, two salons with the same/similar name ended up
- * with the exact same slug, and one profile silently shadowed the other.
- */
-export async function ensureUniqueSlug(baseInput: string, excludeId?: string): Promise<string> {
-  let base = slugify(baseInput);
-  if (!base) base = crypto.randomUUID().slice(0, 8);
-
-  let candidate = base;
-  let counter = 2;
-
-  // Safety cap so a bug elsewhere can't spin this forever
-  for (let i = 0; i < 50; i++) {
-    const existing = await getNailTechBySlug(candidate);
-    if (!existing || existing.id === excludeId) {
-      return candidate;
-    }
-    candidate = `${base}-${counter}`;
-    counter++;
+export const SEED_NAIL_TECHS: NailTech[] = [
+  {
+    id: 'tech-001',
+    slug: 'sara_nails',
+    username: 'sara_nails',
+    password_hash: '123456',
+    name: 'سالن تخصصی ناخن سارا',
+    city: 'تهران',
+    instagram: 'sara_nailart',
+    whatsapp: '09127579476',
+    telegram: 'sara_nailart',
+    avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop',
+    mobile: '09127579476',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'tech-002',
+    slug: 'nikoo_dehpanah',
+    username: 'nikoo_dehpanah',
+    password_hash: '123456',
+    name: 'خدمات تخصصی ناخن نیکو',
+    city: 'اصفهان',
+    instagram: 'nikoo_dehpanah',
+    whatsapp: '09131112233',
+    telegram: 'nikoo_dehpanah',
+    avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=300&fit=crop',
+    mobile: '09131112233',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'tech-003',
+    slug: 'maryam_shakeri',
+    username: 'maryam_shakeri',
+    password_hash: '123456',
+    name: 'سالن زیبایی و کاشت مریم',
+    city: 'کرج',
+    instagram: 'maryam_shakeri',
+    whatsapp: '09359998877',
+    telegram: 'maryam_shakeri',
+    avatar_url: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=300&h=300&fit=crop',
+    mobile: '09359998877',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   }
-  return `${base}-${crypto.randomUUID().slice(0, 4)}`;
+];
+
+export const SEED_DESIGNS: Design[] = [
+  {
+    id: 'des-001',
+    tech_id: 'tech-001',
+    title: 'ژلیش صورتی کریستالی با دیزاین اکلیل',
+    image_url: 'https://images.unsplash.com/photo-1604654894610-df63bc536371?w=500&h=500&fit=crop',
+    tags: ['صورتی', 'فانتزی', 'دیزاین'],
+    price: 380000,
+    duration: 120,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'des-002',
+    tech_id: 'tech-001',
+    title: 'کاشت آکریلیک فرانسوی مات',
+    image_url: 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?w=500&h=500&fit=crop',
+    tags: ['سفید', 'فرنچ', 'ساده'],
+    price: 450000,
+    duration: 150,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'des-003',
+    tech_id: 'tech-001',
+    title: 'دیزاین تابستانی آبرنگی بنفش',
+    image_url: 'https://images.unsplash.com/photo-1519014816548-bf5fe059798b?w=500&h=500&fit=crop',
+    tags: ['بنفش', 'آمبره', 'فانتزی'],
+    price: 520000,
+    duration: 180,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'des-004',
+    tech_id: 'tech-002',
+    title: 'لمینت ناخن نود کلاسیک',
+    image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=500&h=500&fit=crop',
+    tags: ['نود', 'ساده'],
+    price: 290000,
+    duration: 90,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'des-005',
+    tech_id: 'tech-002',
+    title: 'طراحی خاص مشکی متالیک',
+    image_url: 'https://images.unsplash.com/photo-1599940824399-b87987ceb72a?w=500&h=500&fit=crop',
+    tags: ['مشکی', 'تم'],
+    price: 490000,
+    duration: 120,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  },
+  {
+    id: 'des-006',
+    tech_id: 'tech-003',
+    title: 'دیزاین قرمز مجلسی براق',
+    image_url: 'https://images.unsplash.com/photo-1582298538104-fe2e74c27f59?w=500&h=500&fit=crop',
+    tags: ['قرمز', 'عروسی'],
+    price: 420000,
+    duration: 120,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+];
+
+export function ensureLocalSeedData(): void {
+  const existingTechs = getLocalTechs();
+  if (existingTechs.length === 0) {
+    saveLocalTechs(SEED_NAIL_TECHS);
+  }
+  const existingDesigns = getLocalDesigns();
+  if (existingDesigns.length === 0) {
+    saveLocalDesigns(SEED_DESIGNS);
+  }
 }
 
+// Call seed initialization on load
+ensureLocalSeedData();
+
 // ============================================
-// NAIL TECH - Database Operations
+// NAIL TECH DB OPERATIONS
 // ============================================
 
-/**
- * Save or update a nail technician profile
- */
-export async function saveNailTech(data: Omit<NailTech, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<NailTech | null> {
-  const { id, slug, name, city, instagram, avatar_url, mobile } = data;
-  const now = new Date().toISOString();
-
+export async function getAllNailTechs(): Promise<NailTech[]> {
   if (hasSupabaseCredentials) {
     try {
-      await ensureAnonymousSession();
-      if (id) {
-        // Update existing — RLS checks auth.uid() = owner_id on the row
-        const { data: result, error } = await supabase
-          .from('nail_techs')
-          .update({
-            slug,
-            name,
-            city,
-            instagram,
-            avatar_url,
-            mobile,
-            updated_at: now,
-          })
-          .eq('id', id)
-          .select()
-          .single();
+      const { data, error } = await supabase
+        .from('nail_techs')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        if (!error && result) return result;
-        if (error) console.warn('Supabase saveNailTech error, falling back to local storage:', error);
-      } else {
-        // Insert new
-        const newId = crypto.randomUUID();
-        const { data: userData } = await supabase.auth.getUser();
-        const { data: result, error } = await supabase
-          .from('nail_techs')
-          .insert({
-            id: newId,
-            slug: slug || newId.slice(0, 8),
-            name,
-            city,
-            instagram,
-            avatar_url,
-            mobile,
-            owner_id: userData?.user?.id,
-          })
-          .select()
-          .single();
-
-        if (!error && result) return result;
-        if (error) console.warn('Supabase saveNailTech error, falling back to local storage:', error);
+      if (!error && data && data.length > 0) {
+        addLog('info', 'database', `دریافت ${data.length} ناخن‌کار از Supabase`);
+        return data;
+      }
+      if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('error', 'database', 'خطای Supabase در دریافت لیست ناخن‌کاران. انتقال به ذخیره‌سازی محلی.', error);
       }
     } catch (err) {
-      console.warn('Supabase saveNailTech failed, falling back to local storage:', err);
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
+      addLog('error', 'database', 'خطای غیرمنتظره در اتصال به Supabase', err);
     }
+  } else {
+    isCloudFallbackActive = true;
   }
 
-  // Local Storage Fallback
-  const techs = getLocalTechs();
-  if (id) {
-    const index = techs.findIndex(t => t.id === id);
-    if (index !== -1) {
-      const updated: NailTech = {
-        ...techs[index],
-        slug: slug || techs[index].slug,
-        name: name || techs[index].name,
-        city: city || techs[index].city,
-        instagram: instagram !== undefined ? instagram : techs[index].instagram,
-        avatar_url: avatar_url !== undefined ? avatar_url : techs[index].avatar_url,
-        mobile: mobile !== undefined ? mobile : techs[index].mobile,
-        updated_at: now,
-      };
-      techs[index] = updated;
-      return saveLocalTechs(techs) ? updated : null;
-    }
-  }
-
-  // Insert brand new
-  const newId = id || crypto.randomUUID();
-  const newTech: NailTech = {
-    id: newId,
-    slug: slug || newId.slice(0, 8),
-    name: name || '',
-    city: city || '',
-    instagram: instagram || '',
-    avatar_url: avatar_url || '',
-    mobile: mobile || '',
-    created_at: now,
-    updated_at: now,
-  };
-  techs.push(newTech);
-  return saveLocalTechs(techs) ? newTech : null;
+  addLog('info', 'database', 'دریافت لیست ناخن‌کاران از ذخیره‌سازی محلی');
+  return getLocalTechs();
 }
 
-/**
- * Get nail technician profile by ID
- */
-export async function getNailTechById(id: string): Promise<NailTech | null> {
+export async function getNailTechByPhoneOrUsername(query: string): Promise<NailTech | null> {
+  const cleaned = query.trim().replace('@', '');
+  if (!cleaned) return null;
+
   if (hasSupabaseCredentials) {
     try {
+      // Try match by mobile OR username OR slug
       const { data, error } = await supabase
         .from('nail_techs')
         .select('*')
-        .eq('id', id)
-        .single();
+        .or(`mobile.eq.${cleaned},username.eq.${cleaned},slug.eq.${cleaned}`)
+        .maybeSingle();
 
-      if (!error && data) return data;
+      if (!error && data) {
+        addLog('info', 'database', `ناخن‌کار در Supabase یافت شد: ${data.name}`);
+        return data;
+      }
+      if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('warn', 'database', `خطا در جستجوی کاربر در Supabase: ${error.message}`);
+      }
     } catch (err) {
-      console.warn('Supabase getNailTechById failed, checking local storage:', err);
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
     }
   }
 
-  // Local Storage Fallback
+  // Fallback to local storage
   const techs = getLocalTechs();
-  return techs.find(t => t.id === id) || null;
+  return techs.find(t => 
+    t.mobile === cleaned || 
+    t.username === cleaned || 
+    t.slug === cleaned ||
+    t.mobile?.replace(/^0/, '') === cleaned.replace(/^0/, '')
+  ) || null;
 }
 
-/**
- * Get nail technician profile by slug (for public vitrin)
- */
 export async function getNailTechBySlug(slug: string): Promise<NailTech | null> {
+  const cleanedSlug = slug.trim().toLowerCase();
+
   if (hasSupabaseCredentials) {
     try {
       const { data, error } = await supabase
         .from('nail_techs')
         .select('*')
-        .eq('slug', slug)
-        .single();
+        .eq('slug', cleanedSlug)
+        .maybeSingle();
 
       if (!error && data) return data;
+      if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('warn', 'database', `دریافت پروفایل ${slug} از Supabase ناموفق بود: ${error.message}`);
+      }
     } catch (err) {
-      console.warn('Supabase getNailTechBySlug failed, checking local storage:', err);
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
     }
   }
 
-  // Local Storage Fallback
   const techs = getLocalTechs();
-  const found = techs.find(t => t.slug === slug);
+  const found = techs.find(t => t.slug.toLowerCase() === cleanedSlug || t.username?.toLowerCase() === cleanedSlug);
   if (found) return found;
+
+  // Fallback first item if default route
   if ((slug === 'profile' || slug === ':slug') && techs.length > 0) {
     return techs[0];
   }
   return null;
 }
 
-// ============================================
-// DESIGNS - Database Operations
-// ============================================
-
-/**
- * Add a new design to the portfolio
- */
-export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'updated_at'>): Promise<Design | null> {
-  const { tech_id, title, image_url, tags, price, duration } = data;
+export async function saveNailTech(data: {
+  id?: string;
+  slug: string;
+  username?: string;
+  password_hash?: string;
+  name: string;
+  city: string;
+  instagram: string;
+  whatsapp?: string;
+  telegram?: string;
+  avatar_url?: string;
+  mobile: string;
+}): Promise<NailTech | null> {
   const now = new Date().toISOString();
+  const techId = data.id || crypto.randomUUID();
+  const username = data.username || data.slug || techId.slice(0, 8);
 
-  if (hasSupabaseCredentials) {
-    try {
-      await ensureAnonymousSession();
-      const { data: userData } = await supabase.auth.getUser();
-      const { data: result, error } = await supabase
-        .from('designs')
-        .insert({
-          id: crypto.randomUUID(),
-          tech_id,
-          title,
-          image_url,
-          tags,
-          price,
-          duration,
-          owner_id: userData?.user?.id,
-        })
-        .select()
-        .single();
-
-      if (!error && result) return result;
-      if (error) console.warn('Supabase addDesign error, falling back to local storage:', error);
-    } catch (err) {
-      console.warn('Supabase addDesign failed, falling back to local storage:', err);
-    }
-  }
-
-  // Local Storage Fallback
-  const designs = getLocalDesigns();
-  const newDesign: Design = {
-    id: crypto.randomUUID(),
-    tech_id,
-    title,
-    image_url,
-    tags,
-    price,
-    duration,
+  const payload: NailTech = {
+    id: techId,
+    slug: data.slug || username,
+    username,
+    password_hash: data.password_hash || '123456',
+    name: data.name,
+    city: data.city,
+    instagram: data.instagram,
+    whatsapp: data.whatsapp || data.mobile,
+    telegram: data.telegram || data.instagram,
+    avatar_url: data.avatar_url || '',
+    mobile: data.mobile,
     created_at: now,
     updated_at: now,
   };
-  designs.push(newDesign);
-  return saveLocalDesigns(designs) ? newDesign : null;
+
+  let savedInCloud = false;
+
+  if (hasSupabaseCredentials) {
+    try {
+      const { data: result, error } = await supabase
+        .from('nail_techs')
+        .upsert(payload)
+        .select()
+        .single();
+
+      if (!error && result) {
+        savedInCloud = true;
+        addLog('success', 'database', `پروفایل ناخن‌کار با موفقیت در Supabase ذخیره شد: ${payload.name}`);
+      } else if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('error', 'database', `خطای ذخیره‌سازی ناخن‌کار در Supabase: ${error.message} (کد: ${error.code})`, error);
+      }
+    } catch (err) {
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
+      addLog('error', 'database', 'استثنا در ذخیره‌سازی ناخن‌کار در Supabase', err);
+    }
+  } else {
+    isCloudFallbackActive = true;
+  }
+
+  // Always sync to local storage to ensure client continuity
+  const techs = getLocalTechs();
+  const index = techs.findIndex(t => t.id === techId || t.slug === payload.slug);
+  if (index !== -1) {
+    techs[index] = { ...techs[index], ...payload, updated_at: now };
+  } else {
+    techs.unshift(payload);
+  }
+  saveLocalTechs(techs);
+
+  if (!savedInCloud) {
+    addLog('warn', 'database', `پروفایل ${payload.name} در ذخیره‌سازی محلی مرجع ذخیره شد (آفلاین).`);
+  }
+
+  return payload;
 }
 
-/**
- * Get all designs for a specific nail tech
- */
+// ============================================
+// DESIGNS DB OPERATIONS
+// ============================================
+
 export async function getDesigns(techId: string): Promise<Design[]> {
   if (hasSupabaseCredentials) {
     try {
@@ -334,107 +447,99 @@ export async function getDesigns(techId: string): Promise<Design[]> {
         .eq('tech_id', techId)
         .order('created_at', { ascending: false });
 
-      if (!error && data) return data;
+      if (!error && data && data.length > 0) {
+        return data;
+      }
+      if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('warn', 'database', `خطا در دریافت نمونه‌کارهای Supabase برای ${techId}: ${error.message}`);
+      }
     } catch (err) {
-      console.warn('Supabase getDesigns failed, checking local storage:', err);
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
     }
   }
 
-  // Local Storage Fallback
   const designs = getLocalDesigns();
   return designs
     .filter(d => d.tech_id === techId)
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
-/**
- * Get a single design by ID
- */
-export async function getDesignById(designId: string): Promise<Design | null> {
-  if (hasSupabaseCredentials) {
-    try {
-      const { data, error } = await supabase
-        .from('designs')
-        .select('*')
-        .eq('id', designId)
-        .single();
-
-      if (!error && data) return data;
-    } catch (err) {
-      console.warn('Supabase getDesignById failed, checking local storage:', err);
-    }
-  }
-
-  // Local Storage Fallback
-  const designs = getLocalDesigns();
-  return designs.find(d => d.id === designId) || null;
-}
-
-/**
- * Update a design
- */
-export async function updateDesign(designId: string, updatedData: Partial<Omit<Design, 'id' | 'tech_id' | 'created_at' | 'updated_at'>>): Promise<Design | null> {
+export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'updated_at'>): Promise<Design | null> {
   const now = new Date().toISOString();
+  const newDesign: Design = {
+    id: crypto.randomUUID(),
+    tech_id: data.tech_id,
+    title: data.title,
+    image_url: data.image_url,
+    tags: data.tags || [],
+    price: data.price || 0,
+    duration: data.duration || 60,
+    created_at: now,
+    updated_at: now,
+  };
+
+  let savedInCloud = false;
 
   if (hasSupabaseCredentials) {
     try {
-      await ensureAnonymousSession();
-      const { data, error } = await supabase
+      const { data: result, error } = await supabase
         .from('designs')
-        .update({
-          ...updatedData,
-          updated_at: now,
-        })
-        .eq('id', designId)
+        .insert(newDesign)
         .select()
         .single();
 
-      if (!error && data) return data;
+      if (!error && result) {
+        savedInCloud = true;
+        addLog('success', 'database', `نمونه‌کار جدید با موفقیت در Supabase اضافه شد: ${newDesign.title}`);
+      } else if (error) {
+        lastCloudError = error.message;
+        isCloudFallbackActive = true;
+        addLog('error', 'database', `خطا در افزودن نمونه‌کار در Supabase: ${error.message}`, error);
+      }
     } catch (err) {
-      console.warn('Supabase updateDesign failed, falling back to local storage:', err);
+      lastCloudError = String(err);
+      isCloudFallbackActive = true;
+      addLog('error', 'database', 'استثنا در ثبت نمونه‌کار در Supabase', err);
     }
+  } else {
+    isCloudFallbackActive = true;
   }
 
-  // Local Storage Fallback
+  // Sync to local storage
   const designs = getLocalDesigns();
-  const index = designs.findIndex(d => d.id === designId);
-  if (index !== -1) {
-    const updated: Design = {
-      ...designs[index],
-      ...updatedData,
-      updated_at: now,
-    } as Design;
-    designs[index] = updated;
-    saveLocalDesigns(designs);
-    return updated;
+  designs.unshift(newDesign);
+  saveLocalDesigns(designs);
+
+  if (!savedInCloud) {
+    addLog('warn', 'database', `نمونه‌کار "${newDesign.title}" در ذخیره‌سازی محلی ذخیره گردید.`);
   }
-  return null;
+
+  return newDesign;
 }
 
-/**
- * Delete a design
- */
 export async function deleteDesign(designId: string): Promise<boolean> {
   if (hasSupabaseCredentials) {
     try {
-      await ensureAnonymousSession();
       const { error } = await supabase
         .from('designs')
         .delete()
         .eq('id', designId);
 
-      if (!error) return true;
+      if (!error) {
+        addLog('info', 'database', `نمونه‌کار ${designId} از Supabase حذف شد.`);
+      } else {
+        addLog('warn', 'database', `خطا در حذف نمونه‌کار از Supabase: ${error.message}`);
+      }
     } catch (err) {
-      console.warn('Supabase deleteDesign failed, falling back to local storage:', err);
+      addLog('warn', 'database', 'استثنا در حذف نمونه‌کار از Supabase', err);
     }
   }
 
-  // Local Storage Fallback
   const designs = getLocalDesigns();
   const filtered = designs.filter(d => d.id !== designId);
-  if (filtered.length !== designs.length) {
-    saveLocalDesigns(filtered);
-    return true;
-  }
-  return false;
+  saveLocalDesigns(filtered);
+  return true;
 }
