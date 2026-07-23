@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { hasSupabaseCredentials, supabase } from '../lib/supabaseClient';
 import { getSystemLogs, clearSystemLogs, addLog } from '../lib/logger';
-import { getLocalTechs, getLocalDesigns, SEED_NAIL_TECHS, SEED_DESIGNS, saveLocalTechs, saveLocalDesigns } from '../lib/db';
+import { getLocalTechs, getLocalDesigns, saveLocalTechs, saveLocalDesigns } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
 import { 
   Database, 
@@ -135,17 +135,24 @@ CREATE TABLE IF NOT EXISTS public.nail_techs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug TEXT UNIQUE NOT NULL,
     username TEXT UNIQUE,
-    password_hash TEXT DEFAULT '123456',
+    email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     city TEXT NOT NULL,
+    address TEXT,
     instagram TEXT,
     whatsapp TEXT,
     telegram TEXT,
     avatar_url TEXT,
-    mobile TEXT NOT NULL,
+    mobile TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- 1b. Migration for existing installations (adds new auth columns)
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.nail_techs DROP COLUMN IF EXISTS password_hash;
+ALTER TABLE public.nail_techs ALTER COLUMN mobile DROP NOT NULL;
 
 -- 2. Create designs Table
 CREATE TABLE IF NOT EXISTS public.designs (
@@ -159,6 +166,10 @@ CREATE TABLE IF NOT EXISTS public.designs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- 2b. Migration for existing designs tables missing timestamp columns
+ALTER TABLE public.designs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
+ALTER TABLE public.designs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
 
 -- 3. Enable RLS
 ALTER TABLE public.nail_techs ENABLE ROW LEVEL SECURITY;
@@ -418,26 +429,26 @@ CREATE POLICY "Public Avatars Access" ON storage.objects FOR ALL USING (bucket_i
           </div>
         </div>
 
-        {/* Quick Seed Actions */}
+        {/* Local Cache Purge */}
         <div className="bg-neutral-800 border border-neutral-700 rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h3 className="text-xs font-bold text-white">تزریق داده‌های دمو نمونه (Seed Demo Data)</h3>
+            <h3 className="text-xs font-bold text-white">پاک‌سازی حافظه محلی (Local Cache)</h3>
             <p className="text-[11px] text-neutral-400 mt-0.5">
-              بازنشانی داده‌های محلی به همراه ۳ ناخن‌کار نمونه و ۶ نمونه‌کار کامل
+              حذف تمام داده‌های ذخیره‌شده در مرورگر؛ فقط داده‌های واقعی Supabase نمایش داده می‌شوند
             </p>
           </div>
 
           <button
             type="button"
             onClick={() => {
-              saveLocalTechs(SEED_NAIL_TECHS);
-              saveLocalDesigns(SEED_DESIGNS);
-              addLog('info', 'system', 'داده‌های نمونه به حافظه محلی تزریق شدند.');
+              saveLocalTechs([]);
+              saveLocalDesigns([]);
+              addLog('info', 'system', 'حافظه محلی به‌طور کامل پاک‌سازی شد.');
               setLogs(getSystemLogs());
             }}
-            className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-xs font-bold rounded-xl text-white transition-all"
+            className="px-4 py-2 bg-red-900/60 hover:bg-red-800 text-xs font-bold rounded-xl text-white transition-all border border-red-800/60"
           >
-            تزریق داده‌های نمونه
+            پاک‌سازی داده‌های محلی
           </button>
         </div>
 

@@ -1,27 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  saveNailTech, 
-  addDesign, 
-  getNailTechByPhoneOrUsername, 
-  setCurrentUserSession 
+import {
+  saveNailTech,
+  addDesign,
+  getNailTechByEmail,
+  getNailTechBySlug,
+  setCurrentUserSession,
 } from '../lib/db';
+import {
+  isValidEmail,
+  sendEmailOtp,
+  verifyEmailOtp,
+  signInWithGoogle,
+  getAuthedEmail,
+} from '../lib/auth';
 import { uploadImage } from '../lib/storage';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
-import { 
-  Search, 
-  Trash2, 
-  X, 
-  ChevronDown, 
-  Check, 
+import {
+  Search,
+  Trash2,
+  X,
+  ChevronDown,
+  Check,
   Smartphone,
   Wifi,
   BatteryMedium,
   Instagram,
-  UserPlus,
-  Lock,
-  Phone,
+  Mail,
+  KeyRound,
   MapPin,
   MessageCircle,
   Send,
@@ -29,7 +36,8 @@ import {
   ExternalLink,
   Plus,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  Home
 } from 'lucide-react';
 
 const POPULAR_CITIES = [
@@ -71,38 +79,45 @@ function isValidInstagramHandle(handle: string): boolean {
   return /^[a-zA-Z0-9._]{1,30}$/.test(cleaned);
 }
 
-export default function Setup() {
-  const navigate = useNavigate();
-  
-  // Navigation Steps:
-  // 'splash': Initial Choice (Login/Register or View Nail Techs)
-  // 'auth': Phone, Username, Password (Login vs Signup detection)
-  // 'socials': Instagram, WhatsApp, Telegram
-  // 'works': Uploading sample works
-  // 'avatar': Profile Photo & Salon Name
-  // 'ready': Your Vitrin is ready + Share Link!
-  const [step, setStep] = useState<'splash' | 'auth' | 'socials' | 'works' | 'avatar' | 'ready'>('splash');
+// Build a URL-safe slug from the email's local part, e.g. sara.nails@x.com -> sara_nails
+function slugFromEmail(email: string): string {
+  const local = email.split('@')[0] || '';
+  const cleaned = local.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return cleaned || `salon_${crypto.randomUUID().slice(0, 6)}`;
+}
 
-  // Auth mode
-  const [authInput, setAuthInput] = useState(''); // phone or username
-  const [password, setPassword] = useState('');
-  
-  // Registration Form State
-  const [techId, setTechId] = useState<string | null>(null);
+export default function Auth() {
+  const navigate = useNavigate();
+
+  // Step-by-step flow (like Instagram onboarding):
+  // 'email':   ask only for email
+  // 'otp':     verify the code sent to that email
+  // -- new users continue with profile completion: --
+  // 'profile': salon name, city, address + avatar (required info)
+  // 'socials': instagram / whatsapp / telegram (optional)
+  // 'works':   upload نمونه‌کارها
+  // 'ready':   share link, go to profile
+  const [step, setStep] = useState<'checking' | 'email' | 'otp' | 'profile' | 'socials' | 'works' | 'ready'>('checking');
+
+  const [email, setEmail] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [demoCode, setDemoCode] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Profile completion state
   const [techInfo, setTechInfo] = useState<Partial<NailTech>>({
     name: '',
     city: 'تهران',
+    address: '',
     instagram: '',
     whatsapp: '',
     telegram: '',
     avatar_url: '',
-    slug: '',
-    mobile: ''
+    slug: ''
   });
 
-  // Sample Works / Designs State
   const [designs, setDesigns] = useState<Design[]>([]);
-  
+
   // City dropdown state
   const [showCityDropdown, setShowCityDropdown] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState('');
@@ -129,6 +144,7 @@ export default function Setup() {
   });
 
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingDesign, setUploadingDesign] = useState(false);
@@ -136,6 +152,43 @@ export default function Setup() {
 
   // Live clock
   const [currentTime, setCurrentTime] = useState('09:41');
+
+  // Route an authenticated email to the right destination:
+  // existing profile -> their vitrin, new user -> profile completion
+  const routeAuthedEmail = async (authedEmail: string) => {
+    const existing = await getNailTechByEmail(authedEmail);
+    if (existing) {
+      setCurrentUserSession(existing);
+      navigate(`/vitrin/${existing.slug}`, { replace: true });
+      return;
+    }
+    setEmail(authedEmail);
+    setTechInfo(prev => ({ ...prev, email: authedEmail, slug: prev.slug || slugFromEmail(authedEmail) }));
+    setStep('profile');
+  };
+
+  // On mount: detect an already-authenticated session
+  // (e.g. returning from the Google OAuth redirect)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const authedEmail = await getAuthedEmail();
+      if (cancelled) return;
+
+      // Clean the leftover #access_token=... fragment from the OAuth/magic-link redirect
+      if (window.location.hash) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+
+      if (authedEmail) {
+        await routeAuthedEmail(authedEmail);
+      } else {
+        setStep('email');
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const updateTime = () => {
@@ -147,35 +200,27 @@ export default function Setup() {
     updateTime();
     const clockInterval = setInterval(updateTime, 60000);
 
-    // Keyboard shortcut handler for secret demo data fill (Spacebar press)
+    // Secret demo data fill (Spacebar) on profile completion steps
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Secret demo fill trigger: Spacebar when on registration steps
-      if (e.code === 'Space' && (step === 'auth' || step === 'socials' || step === 'works' || step === 'avatar')) {
-        // Avoid filling if typing inside text input that is actively focused
+      if (e.code === 'Space' && (step === 'profile' || step === 'socials' || step === 'works')) {
         const activeTag = document.activeElement?.tagName.toLowerCase();
         if (activeTag === 'input' && (document.activeElement as HTMLInputElement).value.trim().length > 0) {
           return;
         }
+        if (activeTag === 'textarea') return;
 
         e.preventDefault();
-        // Secret fill realistic demo data
-        const demoSlug = 'sara_nails_' + Math.floor(Math.random() * 1000);
-        const demoTech: Partial<NailTech> = {
+        setTechInfo(prev => ({
+          ...prev,
           name: 'سالن تخصصی سارا نیلز',
           city: 'تهران',
+          address: 'تهران، سعادت‌آباد، خیابان سرو غربی، پلاک ۱۲',
           instagram: 'sara_nailart',
           whatsapp: '09127579476',
           telegram: 'sara_nailart',
-          mobile: '09127579476',
-          slug: demoSlug,
           avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop'
-        };
+        }));
 
-        setTechInfo(demoTech);
-        setAuthInput('09127579476');
-        setPassword('password123');
-
-        // Add 3 sample works
         const sampleDesigns: Design[] = [
           {
             id: crypto.randomUUID(),
@@ -213,7 +258,7 @@ export default function Setup() {
         ];
 
         setDesigns(sampleDesigns);
-        setError('داده‌های آزمایشی میانبر با موفقیت جایگذاری شدند.');
+        setNotice('داده‌های آزمایشی میانبر با موفقیت جایگذاری شدند.');
       }
     };
 
@@ -224,6 +269,13 @@ export default function Setup() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [step]);
+
+  // Resend cooldown ticker
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const t = setTimeout(() => setResendCooldown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendCooldown]);
 
   // Handle clicking outside city dropdown
   useEffect(() => {
@@ -236,63 +288,69 @@ export default function Setup() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleAuthSubmit = async () => {
+  // ============================================
+  // STEP HANDLERS
+  // ============================================
+
+  const handleSendOtp = async () => {
     setError('');
-    const input = authInput.trim();
-    if (!input) {
-      setError('لطفاً شماره موبایل یا آیدی کاربری را وارد کنید.');
+    setNotice('');
+    const cleaned = email.trim().toLowerCase();
+
+    if (!isValidEmail(cleaned)) {
+      setError('لطفاً یک ایمیل معتبر وارد کنید.');
       return;
     }
 
     setLoading(true);
     try {
-      // Check if tech exists
-      const existing = await getNailTechByPhoneOrUsername(input);
-
-      if (existing) {
-        if (!password) {
-          setError('حساب شما یافت شد. لطفاً رمز عبور خود را وارد کنید.');
-          setLoading(false);
-          return;
-        }
-
-        // Verify password
-        if (existing.password_hash && existing.password_hash !== password) {
-          setError('رمز عبور وارد شده نادرست است.');
-          setLoading(false);
-          return;
-        }
-
-        // Login success!
-        setCurrentUserSession(existing);
-        setTechId(existing.id);
-        setTechInfo(existing);
-        navigate(`/vitrin/${existing.slug}`);
-      } else {
-        // New user creation path
-        if (!password) {
-          setError('لطفاً یک رمز عبور برای حساب خود تعیین کنید.');
-          setLoading(false);
-          return;
-        }
-
-        // Prepare new tech state
-        const slug = input.includes('09') ? `tech_${crypto.randomUUID().slice(0, 6)}` : input.replace('@', '');
-        setTechInfo(prev => ({
-          ...prev,
-          mobile: input.includes('09') ? input : '09120000000',
-          username: slug,
-          slug: slug
-        }));
-
-        setStep('socials');
+      const result = await sendEmailOtp(cleaned);
+      if (!result.ok) {
+        setError(result.error || 'ارسال کد با خطا مواجه شد.');
+        return;
       }
-    } catch (err) {
-      console.error(err);
-      setError('خطا در احراز هویت');
+      setEmail(cleaned);
+      setOtpCode('');
+      setDemoCode(result.demoCode || null);
+      setResendCooldown(60);
+      setStep('otp');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerifyOtp = async () => {
+    setError('');
+    setNotice('');
+
+    if (otpCode.trim().length < 6) {
+      setError('کد ۶ رقمی ارسال شده را کامل وارد کنید.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await verifyEmailOtp(email, otpCode);
+      if (!result.ok) {
+        setError(result.error || 'کد وارد شده نادرست است.');
+        return;
+      }
+      await routeAuthedEmail(email);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setError('');
+    setNotice('');
+    setLoading(true);
+    const result = await signInWithGoogle();
+    if (!result.ok) {
+      setError(result.error || 'ورود با گوگل با خطا مواجه شد.');
+      setLoading(false);
+    }
+    // On success the browser redirects to Google; nothing else to do here.
   };
 
   const handleAvatarUpload = async (file: File | null) => {
@@ -313,12 +371,29 @@ export default function Setup() {
     }
   };
 
+  const handleProfileNext = () => {
+    setError('');
+    if (!techInfo.name?.trim()) {
+      setError('نام سالن یا ناخن‌کار الزامی است.');
+      return;
+    }
+    if (!techInfo.city?.trim()) {
+      setError('انتخاب شهر الزامی است.');
+      return;
+    }
+    if (!techInfo.address?.trim()) {
+      setError('آدرس سالن الزامی است.');
+      return;
+    }
+    setStep('socials');
+  };
+
   const handleDesignImageUpload = async (file: File | null) => {
     if (!file) return;
     setUploadingDesign(true);
     setError('');
     try {
-      const url = await uploadImage(file, 'designs', techId || 'temp');
+      const url = await uploadImage(file, 'designs', 'temp');
       if (url) {
         setNewDesign(prev => ({ ...prev, image_url: url }));
       } else {
@@ -346,7 +421,7 @@ export default function Setup() {
     }
 
     const priceNum = parseInt(newDesign.price.replace(/,/g, '')) || 0;
-    
+
     let durationMins = 120;
     if (newDesign.duration.includes('۳')) durationMins = 180;
     else if (newDesign.duration.includes('۲.۵')) durationMins = 150;
@@ -357,7 +432,7 @@ export default function Setup() {
 
     const sample: Design = {
       id: crypto.randomUUID(),
-      tech_id: techId || 'temp',
+      tech_id: 'temp',
       title: newDesign.title,
       image_url: newDesign.image_url,
       tags: [newDesign.colorTag, newDesign.styleTag].filter(Boolean),
@@ -382,34 +457,38 @@ export default function Setup() {
   };
 
   const handleFinalSubmit = async () => {
-    if (!techInfo.name?.trim()) {
-      setError('نام سالن یا ناخن‌کار الزامی است.');
+    if (designs.length === 0) {
+      setError('لطفاً حداقل یک نمونه‌کار وارد کنید.');
       return;
     }
 
     setLoading(true);
+    setError('');
     try {
-      const finalSlug = techInfo.slug || techInfo.username || `tech_${crypto.randomUUID().slice(0, 6)}`;
+      // Make sure the slug is unique before committing
+      let finalSlug = techInfo.slug || slugFromEmail(email);
+      const taken = await getNailTechBySlug(finalSlug);
+      if (taken && taken.email?.toLowerCase() !== email) {
+        finalSlug = `${finalSlug}_${crypto.randomUUID().slice(0, 4)}`;
+      }
 
       const savedTech = await saveNailTech({
-        id: techId || undefined,
         slug: finalSlug,
-        username: techInfo.username || finalSlug,
-        password_hash: password || '123456',
-        name: techInfo.name,
+        username: finalSlug,
+        email,
+        name: techInfo.name || '',
         city: techInfo.city || 'تهران',
+        address: techInfo.address || '',
         instagram: techInfo.instagram || '',
-        whatsapp: techInfo.whatsapp || techInfo.mobile,
+        whatsapp: techInfo.whatsapp || '',
         telegram: techInfo.telegram || '',
         avatar_url: techInfo.avatar_url || '',
-        mobile: techInfo.mobile || '09120000000',
       });
 
       if (savedTech) {
         setCurrentUserSession(savedTech);
-        setTechId(savedTech.id);
+        setTechInfo(savedTech);
 
-        // Save designs
         for (const des of designs) {
           await addDesign({
             tech_id: savedTech.id,
@@ -434,7 +513,7 @@ export default function Setup() {
   };
 
   const getFullShareUrl = () => {
-    const slug = techInfo.slug || techInfo.username || 'profile';
+    const slug = techInfo.slug || 'profile';
     const baseUrl = window.location.origin;
     return `${baseUrl}/vitrin/${slug}`;
   };
@@ -447,11 +526,23 @@ export default function Setup() {
 
   const filteredCities = POPULAR_CITIES.filter(c => c.includes(citySearchQuery.trim()));
 
+  const errorBox = error && (
+    <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold border border-red-100 text-right">
+      {error}
+    </div>
+  );
+
+  const noticeBox = notice && (
+    <div className="bg-emerald-50 text-emerald-600 px-4 py-3 rounded-[16px] text-xs font-semibold border border-emerald-100 text-right">
+      {notice}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-[#E5E7EB] sm:bg-[#F3F4F6] flex items-center justify-center p-0 md:py-8" dir="rtl">
-      
+
       <div className="phone-mockup-wrapper md:max-w-[700px] md:h-auto md:min-h-[850px] md:border-none md:rounded-[32px] md:shadow-[0_12px_45px_rgba(0,0,0,0.06)] bg-neutral-50 flex flex-col relative text-[#1F2937] font-sans">
-        
+
         <OfflineWarningBanner />
 
         {/* Status Bar (Hidden on Desktop) */}
@@ -465,163 +556,273 @@ export default function Setup() {
         </div>
 
         {/* ============================================
-            STEP 0: SPLASH LANDING CHOICE
+            STEP: CHECKING EXISTING SESSION
             ============================================ */}
-        {step === 'splash' && (
-          <div className="flex-1 flex flex-col justify-between p-8 bg-white text-center">
-            <div className="pt-8">
-              <span className="text-[11px] font-bold text-[#EC4899] bg-pink-50 px-3 py-1 rounded-full border border-pink-100/50">
-                ویتِرینو • ساخت ویترین اختصاصی ناخن
-              </span>
-              <h1 className="text-2xl font-black text-neutral-900 mt-4 tracking-tight">
-                پلتفرم تخصصی معرفی و رزرو ناخن‌کاران
-              </h1>
-              <p className="text-xs text-neutral-500 mt-2 font-medium leading-relaxed px-2">
-                ویترین آنلاین کارهای خود را بسازید، لینک اختصاصی بیو اینستاگرام دریافت کنید و نوبت‌دهی خود را ساده کنید.
-              </p>
-            </div>
-
-            <div className="my-8 flex justify-center">
-              <div className="w-48 h-48 rounded-full bg-gradient-to-tr from-pink-100 via-pink-50 to-purple-100 p-2 flex items-center justify-center shadow-inner">
-                <div className="w-full h-full rounded-full bg-white border border-pink-200/60 flex flex-col items-center justify-center p-4">
-                  <Sparkles className="w-10 h-10 text-[#EC4899] animate-pulse" />
-                  <span className="text-xs font-black text-neutral-800 mt-2">ویتِرینو</span>
-                  <span className="text-[9px] font-bold text-neutral-400 mt-0.5">Vitrino Portfolio</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3 pb-4">
-              <button
-                type="button"
-                onClick={() => setStep('auth')}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-sm font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>ثبت‌نام یا ورود ناخن‌کار</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/techs')}
-                className="w-full py-3.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-xs font-bold rounded-[18px] text-center transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <Search className="w-4 h-4 text-neutral-500" />
-                <span>مشاهده ناخن‌کاران</span>
-              </button>
-            </div>
+        {step === 'checking' && (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white text-center gap-3">
+            <span className="loading loading-spinner text-[#EC4899]" />
+            <p className="text-xs font-bold text-neutral-500">در حال بررسی وضعیت ورود...</p>
           </div>
         )}
 
         {/* ============================================
-            STEP 1: AUTHENTICATION (PHONE & PASSWORD)
+            STEP 1: EMAIL ONLY
             ============================================ */}
-        {step === 'auth' && (
+        {step === 'email' && (
           <div className="flex-1 flex flex-col justify-between p-6 bg-white">
             <div className="space-y-6">
               <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
                 <button
                   type="button"
-                  onClick={() => setStep('splash')}
+                  onClick={() => navigate('/')}
                   className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
+                  title="بازگشت به لیست"
                 >
-                  <ArrowRight className="w-5 h-5" />
+                  <Home className="w-5 h-5" />
                 </button>
-                <span className="text-xs font-black text-neutral-800">ورود و ثبت‌نام</span>
+                <span className="text-xs font-black text-neutral-800">ورود یا ثبت سالن</span>
                 <div className="w-5" />
               </div>
 
               <div>
-                <h2 className="text-lg font-bold text-neutral-900">شماره موبایل یا نام‌کاربری</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold">
-                  در صورت وجود حساب وارد می‌شوید، در غیر این صورت حساب جدید ساخته می‌شود.
+                <h2 className="text-lg font-bold text-neutral-900">ایمیل خود را وارد کنید</h2>
+                <p className="text-xs text-neutral-400 mt-1 font-semibold leading-relaxed">
+                  کد تأیید به ایمیل شما ارسال می‌شود. اگر قبلاً ثبت‌نام کرده باشید وارد پروفایل خود می‌شوید، در غیر این صورت حساب جدید ساخته می‌شود.
                 </p>
               </div>
 
               <div className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                    <Phone className="w-3.5 h-3.5 text-[#EC4899]" />
-                    <span>شماره موبایل یا نام‌کاربری</span>
+                    <Mail className="w-3.5 h-3.5 text-[#EC4899]" />
+                    <span>آدرس ایمیل</span>
                   </label>
                   <input
-                    type="text"
-                    placeholder="مثال: ۰۹۱۲۷۵۷۹۴۷۶ یا sara_nails"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="مثال: sara@gmail.com"
                     className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr"
-                    value={authInput}
+                    value={email}
                     onChange={(e) => {
-                      setAuthInput(e.target.value);
+                      setEmail(e.target.value);
                       setError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSendOtp();
                     }}
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                    <Lock className="w-3.5 h-3.5 text-[#EC4899]" />
-                    <span>رمز عبور</span>
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="رمز عبور خود را وارد کنید"
-                    className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr"
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value);
-                      setError('');
-                    }}
-                  />
-                </div>
-
-                {error && (
-                  <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold border border-red-100 text-right">
-                    {error}
-                  </div>
-                )}
+                {errorBox}
               </div>
             </div>
 
-            <div className="pb-4">
+            <div className="pb-4 space-y-3">
               <button
                 type="button"
-                onClick={handleAuthSubmit}
+                onClick={handleSendOtp}
                 disabled={loading}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
+                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
               >
-                {loading ? 'در حال بررسی...' : 'ادامه'}
+                {loading ? 'در حال ارسال کد...' : 'ارسال کد تأیید'}
+              </button>
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-neutral-200" />
+                <span className="text-[10px] font-bold text-neutral-400">یا</span>
+                <div className="flex-1 h-px bg-neutral-200" />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={loading}
+                className="w-full py-3.5 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-bold rounded-[18px] text-center transition-all cursor-pointer border border-neutral-200 flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A11 11 0 0 0 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                <span>ورود با حساب گوگل</span>
               </button>
             </div>
           </div>
         )}
 
         {/* ============================================
-            STEP 2: SOCIAL LINKS
+            STEP 2: OTP CODE
             ============================================ */}
-        {step === 'socials' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
-            <div className="space-y-5">
+        {step === 'otp' && (
+          <div className="flex-1 flex flex-col justify-between p-6 bg-white">
+            <div className="space-y-6">
               <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
                 <button
                   type="button"
-                  onClick={() => setStep('auth')}
+                  onClick={() => {
+                    setStep('email');
+                    setOtpCode('');
+                    setError('');
+                  }}
                   className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
                 >
                   <ArrowRight className="w-5 h-5" />
                 </button>
-
-                {/* Progress bar pill */}
-                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۱ از ۳: اطلاعات ارتباطی
-                </div>
-
+                <span className="text-xs font-black text-neutral-800">تأیید ایمیل</span>
                 <div className="w-5" />
               </div>
 
               <div>
-                <h2 className="text-lg font-bold text-neutral-900">شهر و شبکه‌های اجتماعی</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold">
-                  مشتریان از طریق این آیدی‌ها با سالن شما ارتباط می‌گیرند.
+                <h2 className="text-lg font-bold text-neutral-900">کد تأیید را وارد کنید</h2>
+                <p className="text-xs text-neutral-400 mt-1 font-semibold leading-relaxed">
+                  کد ۶ رقمی به <span className="font-mono text-[#EC4899] dir-ltr inline-block">{email}</span> ارسال شد.
                 </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
+                    <KeyRound className="w-3.5 h-3.5 text-[#EC4899]" />
+                    <span>کد ۶ رقمی</span>
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    placeholder="••••••"
+                    className="w-full px-4 py-4 bg-neutral-50 border border-neutral-200 rounded-[16px] text-lg font-black tracking-[0.5em] focus:outline-none focus:border-[#EC4899] text-center dir-ltr"
+                    value={otpCode}
+                    onChange={(e) => {
+                      setOtpCode(e.target.value.replace(/[^0-9۰-۹]/g, '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))));
+                      setError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleVerifyOtp();
+                    }}
+                  />
+                </div>
+
+                {demoCode && (
+                  <div className="bg-amber-50 text-amber-600 px-4 py-3 rounded-[16px] text-[11px] font-bold border border-amber-100 text-right leading-relaxed">
+                    حالت دمو (بدون اتصال سرور): کد تأیید شما <span className="font-mono text-sm tracking-widest">{demoCode}</span> است.
+                  </div>
+                )}
+
+                {errorBox}
+
+                <div className="flex items-center justify-between text-[11px] font-bold">
+                  <button
+                    type="button"
+                    disabled={resendCooldown > 0 || loading}
+                    onClick={handleSendOtp}
+                    className="text-[#EC4899] disabled:text-neutral-300 transition-all cursor-pointer disabled:cursor-default"
+                  >
+                    {resendCooldown > 0
+                      ? `ارسال مجدد کد تا ${resendCooldown.toLocaleString('fa-IR')} ثانیه دیگر`
+                      : 'ارسال مجدد کد'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStep('email');
+                      setOtpCode('');
+                      setError('');
+                    }}
+                    className="text-neutral-400 hover:text-neutral-600 transition-all cursor-pointer"
+                  >
+                    تغییر ایمیل
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="pb-4">
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={loading}
+                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
+              >
+                {loading ? 'در حال بررسی کد...' : 'تأیید و ادامه'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================
+            STEP 3: PROFILE BASICS (NAME, CITY, ADDRESS, AVATAR)
+            ============================================ */}
+        {step === 'profile' && (
+          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
+            <div className="space-y-5">
+              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                <div className="w-5" />
+                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
+                  مرحله ۱ از ۳: اطلاعات سالن
+                </div>
+                <div className="w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-neutral-900">تکمیل اطلاعات سالن</h2>
+                <p className="text-xs text-neutral-400 mt-1 font-semibold">
+                  این اطلاعات در صفحه عمومی ویترین شما نمایش داده می‌شود.
+                </p>
+              </div>
+
+              {/* Avatar Selector */}
+              <div className="flex flex-col items-center justify-center py-2">
+                {techInfo.avatar_url ? (
+                  <div className="relative">
+                    <div className="w-28 h-28 rounded-full overflow-hidden border-2 border-[#EC4899] p-0.5">
+                      <img src={techInfo.avatar_url} alt="Profile" className="w-full h-full object-cover rounded-full" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTechInfo(prev => ({ ...prev, avatar_url: '' }))}
+                      className="absolute top-0 left-0 bg-white text-neutral-700 rounded-full p-1 shadow border border-neutral-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="w-28 h-28 border-2 border-dashed border-[#EC4899] bg-pink-50/20 hover:bg-pink-50/50 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all">
+                    <Plus className="w-7 h-7 text-[#EC4899]" />
+                    <span className="text-[10px] font-bold text-[#EC4899] mt-1">عکس پروفایل</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleAvatarUpload(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                )}
+                {uploadingAvatar && (
+                  <div className="text-[10px] text-[#EC4899] font-bold text-center mt-2 animate-pulse">
+                    در حال آپلود...
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
+                  <span>نام سالن یا ناخن‌کار</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="مثال: سالن زیبایی سارا نیلز"
+                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-right"
+                  value={techInfo.name || ''}
+                  onChange={(e) => {
+                    setTechInfo(prev => ({ ...prev, name: e.target.value }));
+                    setError('');
+                  }}
+                />
               </div>
 
               {/* City Selection Input */}
@@ -644,9 +845,9 @@ export default function Setup() {
                   <div ref={cityDropdownRef} className="absolute z-30 left-0 right-0 mt-2 bg-white rounded-[16px] border border-neutral-200 shadow-xl overflow-hidden flex flex-col max-h-[200px]">
                     <div className="p-2 border-b border-neutral-100 flex items-center gap-2 bg-neutral-50">
                       <Search className="w-4 h-4 text-neutral-400 shrink-0" />
-                      <input 
-                        type="text" 
-                        placeholder="جستجوی شهر..." 
+                      <input
+                        type="text"
+                        placeholder="جستجوی شهر..."
                         className="w-full bg-transparent text-xs outline-none text-right font-semibold py-1"
                         value={citySearchQuery}
                         onChange={(e) => setCitySearchQuery(e.target.value)}
@@ -670,6 +871,71 @@ export default function Setup() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Address */}
+              <div className="space-y-1.5">
+                <label className="text-neutral-700 text-xs font-bold flex items-center gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-[#EC4899]" />
+                  <span>آدرس سالن</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="مثال: تهران، سعادت‌آباد، خیابان سرو غربی، پلاک ۱۲"
+                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-right resize-none"
+                  value={techInfo.address || ''}
+                  onChange={(e) => {
+                    setTechInfo(prev => ({ ...prev, address: e.target.value }));
+                    setError('');
+                  }}
+                />
+              </div>
+
+              {noticeBox}
+              {errorBox}
+            </div>
+
+            <div className="pb-4 pt-4">
+              <button
+                type="button"
+                onClick={handleProfileNext}
+                disabled={uploadingAvatar}
+                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
+              >
+                مرحله بعد: شبکه‌های اجتماعی
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================
+            STEP 4: SOCIAL LINKS (OPTIONAL)
+            ============================================ */}
+        {step === 'socials' && (
+          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
+            <div className="space-y-5">
+              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setStep('profile')}
+                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
+                >
+                  <ArrowRight className="w-5 h-5" />
+                </button>
+
+                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
+                  مرحله ۲ از ۳: اطلاعات ارتباطی
+                </div>
+
+                <div className="w-5" />
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-neutral-900">شبکه‌های اجتماعی</h2>
+                <p className="text-xs text-neutral-400 mt-1 font-semibold">
+                  مشتریان از طریق این آیدی‌ها با سالن شما ارتباط می‌گیرند. (اختیاری)
+                </p>
               </div>
 
               {/* Instagram Handle Input */}
@@ -735,11 +1001,8 @@ export default function Setup() {
                 </div>
               </div>
 
-              {error && (
-                <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold border border-red-100 text-right">
-                  {error}
-                </div>
-              )}
+              {noticeBox}
+              {errorBox}
             </div>
 
             <div className="pb-4 pt-4">
@@ -755,7 +1018,7 @@ export default function Setup() {
         )}
 
         {/* ============================================
-            STEP 3: UPLOADING WORKS
+            STEP 5: UPLOADING WORKS
             ============================================ */}
         {step === 'works' && (
           <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
@@ -770,7 +1033,7 @@ export default function Setup() {
                 </button>
 
                 <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۲ از ۳: افزودن نمونه‌کارها
+                  مرحله ۳ از ۳: افزودن نمونه‌کارها
                 </div>
 
                 <div className="w-5" />
@@ -789,9 +1052,9 @@ export default function Setup() {
                   {designs.map((item) => (
                     <div key={item.id} className="bg-neutral-50 border border-neutral-200 rounded-[16px] p-3 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <img 
-                          src={item.image_url} 
-                          alt={item.title} 
+                        <img
+                          src={item.image_url}
+                          alt={item.title}
                           className="w-12 h-12 rounded-[12px] object-cover shrink-0 border border-neutral-200"
                         />
                         <div className="min-w-0 text-right">
@@ -823,119 +1086,16 @@ export default function Setup() {
                 <span>+ افزودن نمونه‌کار جدید</span>
               </button>
 
-              {error && (
-                <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold border border-red-100 text-right">
-                  {error}
-                </div>
-              )}
+              {noticeBox}
+              {errorBox}
             </div>
 
             <div className="pb-4 pt-4">
               <button
                 type="button"
-                onClick={() => {
-                  if (designs.length === 0) {
-                    setError('لطفاً حداقل یک نمونه‌کار وارد کنید.');
-                    return;
-                  }
-                  setError('');
-                  setStep('avatar');
-                }}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
-              >
-                مرحله بعد: عکس پروفایل و نام سالن
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ============================================
-            STEP 4: AVATAR & NAME
-            ============================================ */}
-        {step === 'avatar' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white">
-            <div className="space-y-6">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <button
-                  type="button"
-                  onClick={() => setStep('works')}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
-                >
-                  <ArrowRight className="w-5 h-5" />
-                </button>
-
-                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۳ از ۳: عکس و نام
-                </div>
-
-                <div className="w-5" />
-              </div>
-
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">عکس پروفایل و نام سالن</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold">
-                  تصویر زیبا یا لوگوی سالن خود را بارگذاری کنید.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                  <span>نام سالن یا ناخن‌کار</span>
-                  <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="مثال: سالن زیبایی سارا نیلز"
-                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-right"
-                  value={techInfo.name || ''}
-                  onChange={(e) => {
-                    setTechInfo(prev => ({ ...prev, name: e.target.value }));
-                    setError('');
-                  }}
-                />
-              </div>
-
-              {/* Avatar Selector */}
-              <div className="flex flex-col items-center justify-center py-4">
-                <div className="relative">
-                  {techInfo.avatar_url ? (
-                    <div className="w-32 h-32 rounded-full overflow-hidden border-2 border-[#EC4899] p-0.5">
-                      <img src={techInfo.avatar_url} alt="Profile" className="w-full h-full object-cover rounded-full" />
-                    </div>
-                  ) : (
-                    <label className="w-32 h-32 border-2 border-dashed border-[#EC4899] bg-pink-50/20 hover:bg-pink-50/50 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all">
-                      <Plus className="w-8 h-8 text-[#EC4899]" />
-                      <span className="text-[10px] font-bold text-[#EC4899] mt-1">انتخاب عکس</span>
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        className="hidden" 
-                        onChange={(e) => handleAvatarUpload(e.target.files?.[0] || null)}
-                      />
-                    </label>
-                  )}
-
-                  {uploadingAvatar && (
-                    <div className="text-[10px] text-[#EC4899] font-bold text-center mt-2 animate-pulse">
-                      در حال آپلود...
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {error && (
-                <div className="bg-red-50 text-red-500 px-4 py-3 rounded-[16px] text-xs font-semibold border border-red-100 text-right">
-                  {error}
-                </div>
-              )}
-            </div>
-
-            <div className="pb-4">
-              <button
-                type="button"
                 onClick={handleFinalSubmit}
-                disabled={loading || uploadingAvatar}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
+                disabled={loading || uploadingDesign}
+                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
               >
                 {loading ? 'در حال ثبت نهایی ویترین...' : 'تکمیل و ساخت ویترین'}
               </button>
@@ -944,7 +1104,7 @@ export default function Setup() {
         )}
 
         {/* ============================================
-            STEP 5: READY CONGRATS & SHARE LINK
+            STEP 6: READY CONGRATS & SHARE LINK
             ============================================ */}
         {step === 'ready' && (
           <div className="flex-1 flex flex-col justify-between p-8 bg-white text-center">
@@ -962,7 +1122,7 @@ export default function Setup() {
             {/* Share Link Card */}
             <div className="bg-neutral-50 border border-neutral-200 rounded-[20px] p-4 text-center space-y-3 my-4">
               <span className="text-[11px] font-bold text-neutral-400 block">لینک اختصاصی ویترین شما</span>
-              
+
               <div className="bg-white border border-neutral-200 rounded-xl py-2.5 px-3 text-xs font-mono text-[#EC4899] dir-ltr text-center truncate">
                 {getFullShareUrl()}
               </div>
@@ -989,10 +1149,7 @@ export default function Setup() {
             <div className="pb-4">
               <button
                 type="button"
-                onClick={() => {
-                  const slug = techInfo.slug || techInfo.username || 'profile';
-                  navigate(`/vitrin/${slug}`);
-                }}
+                onClick={() => navigate(`/vitrin/${techInfo.slug || 'profile'}`)}
                 className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
               >
                 مشاهده ویترین من

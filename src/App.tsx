@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import Setup from './pages/Setup';
+import Auth from './pages/Auth';
 import TechList from './pages/TechList';
 import Vitrin from './pages/Vitrin';
 import SecretAdmin from './pages/SecretAdmin';
@@ -8,15 +8,16 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Splash & Multi-step Setup Flow */}
-        <Route path="/" element={<Setup />} />
-        <Route path="/setup" element={<Setup />} />
-        <Route path="/register" element={<Setup />} />
-        <Route path="/login" element={<Setup />} />
-
-        {/* Explore Nail Techs List */}
+        {/* Public Explore (landing page, no login needed) */}
+        <Route path="/" element={<TechList />} />
         <Route path="/techs" element={<TechList />} />
         <Route path="/explore" element={<TechList />} />
+
+        {/* Step-by-step Email OTP / Google Auth & Profile Completion */}
+        <Route path="/auth" element={<Auth />} />
+        <Route path="/login" element={<Auth />} />
+        <Route path="/register" element={<Auth />} />
+        <Route path="/setup" element={<Auth />} />
 
         {/* Public Vitrin Showcase */}
         <Route path="/vitrin/:slug" element={<Vitrin />} />

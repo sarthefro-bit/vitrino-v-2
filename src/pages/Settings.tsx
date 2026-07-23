@@ -49,14 +49,24 @@ export default function Settings() {
 CREATE TABLE IF NOT EXISTS public.nail_techs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE,
+    email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     city TEXT NOT NULL,
+    address TEXT,
     instagram TEXT,
+    whatsapp TEXT,
+    telegram TEXT,
     avatar_url TEXT,
     mobile TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Migration for existing installations (email OTP auth refactor)
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.nail_techs DROP COLUMN IF EXISTS password_hash;
 
 -- ============================================
 -- 2. Create Table for Designs (Portfolio Samples)

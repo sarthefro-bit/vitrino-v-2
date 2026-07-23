@@ -27,10 +27,13 @@ export default function OfflineWarningBanner() {
         setBannerState({
           show: true,
           type: 'fallback-error',
-          message: lastCloudError 
+          message: lastCloudError
             ? `خطای ابری Supabase: ${lastCloudError}. داده‌ها به صورت محلی ذخیره گردیدند.`
             : 'ارتباط ابری قطع شد. سیستم از حافظه محلی استفاده می‌کند.',
         });
+      } else {
+        // Cloud recovered — hide the warning again
+        setBannerState(prev => (prev.show ? { show: false, type: 'no-creds', message: '' } : prev));
       }
     };
 

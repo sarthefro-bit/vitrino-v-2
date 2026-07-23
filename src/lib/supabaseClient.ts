@@ -20,5 +20,12 @@ if (!hasSupabaseCredentials) {
 
 export const supabase = createClient(
   SUPABASE_URL || 'https://placeholder.supabase.co',
-  SUPABASE_KEY || 'placeholder-anon-key'
+  SUPABASE_KEY || 'placeholder-anon-key',
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true, // needed for the Google OAuth redirect back to /auth
+    },
+  }
 );

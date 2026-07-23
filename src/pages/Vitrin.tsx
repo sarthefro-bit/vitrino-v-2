@@ -1,33 +1,51 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  getNailTechBySlug, 
-  getDesigns, 
-  addDesign, 
-  getCurrentUserSession, 
-  logoutUserSession 
+import {
+  getNailTechBySlug,
+  getDesigns,
+  addDesign,
+  deleteDesign,
+  saveNailTech,
+  getCurrentUserSession,
+  logoutUserSession,
+  setCurrentUserSession
 } from '../lib/db';
+import { signOutAuth } from '../lib/auth';
 import { uploadImage } from '../lib/storage';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
-import { 
-  Instagram, 
-  Phone, 
-  MapPin, 
-  Clock, 
-  MessageCircle, 
-  Plus, 
-  X, 
-  Check, 
-  Copy, 
-  LogOut, 
-  Smartphone, 
-  Wifi, 
+import {
+  Instagram,
+  Phone,
+  MapPin,
+  Clock,
+  MessageCircle,
+  Plus,
+  X,
+  Check,
+  Copy,
+  LogOut,
+  Smartphone,
+  Wifi,
   BatteryMedium,
   Share2,
   Sparkles,
-  ChevronLeft
+  ChevronLeft,
+  Pencil,
+  Trash2,
+  Send
 } from 'lucide-react';
+
+const POPULAR_CITIES = [
+  'تهران',
+  'کرج',
+  'اصفهان',
+  'شیراز',
+  'مشهد',
+  'تبریز',
+  'یزد',
+  'رشت'
+];
 
 export default function Vitrin() {
   const { slug } = useParams<{ slug: string }>();
@@ -54,6 +72,16 @@ export default function Vitrin() {
     price: '',
     duration: '۲ ساعت',
   });
+
+  // Edit Profile Modal state (for owner, like Instagram's "Edit profile")
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editInfo, setEditInfo] = useState<Partial<NailTech>>({});
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  // Delete design confirmation (for owner)
+  const [designToDelete, setDesignToDelete] = useState<Design | null>(null);
 
   const [copiedMessage, setCopiedMessage] = useState(false);
   const [currentTime, setCurrentTime] = useState('09:41');
@@ -176,6 +204,92 @@ export default function Vitrin() {
     }
   };
 
+  const handleOpenEditModal = () => {
+    if (!tech) return;
+    setEditInfo({
+      name: tech.name,
+      city: tech.city,
+      address: tech.address || '',
+      instagram: tech.instagram || '',
+      whatsapp: tech.whatsapp || '',
+      telegram: tech.telegram || '',
+      avatar_url: tech.avatar_url || '',
+    });
+    setEditError('');
+    setShowEditModal(true);
+  };
+
+  const handleEditAvatarUpload = async (file: File | null) => {
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const url = await uploadImage(file, 'avatars', `avatars/${tech?.id || 'temp'}`);
+      if (url) setEditInfo(prev => ({ ...prev, avatar_url: url }));
+      else setEditError('خطا در آپلود تصویر پروفایل');
+    } catch {
+      setEditError('خطا در آپلود تصویر پروفایل');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!tech) return;
+    if (!editInfo.name?.trim()) {
+      setEditError('نام سالن الزامی است.');
+      return;
+    }
+    if (!editInfo.address?.trim()) {
+      setEditError('آدرس سالن الزامی است.');
+      return;
+    }
+
+    setSavingProfile(true);
+    setEditError('');
+    try {
+      const updated = await saveNailTech({
+        id: tech.id,
+        slug: tech.slug,
+        username: tech.username,
+        email: tech.email,
+        name: editInfo.name,
+        city: editInfo.city || tech.city,
+        address: editInfo.address,
+        instagram: editInfo.instagram || '',
+        whatsapp: editInfo.whatsapp || '',
+        telegram: editInfo.telegram || '',
+        avatar_url: editInfo.avatar_url || '',
+        mobile: tech.mobile,
+      });
+
+      if (updated) {
+        setTech(updated);
+        setCurrentUserSession(updated);
+        setShowEditModal(false);
+      } else {
+        setEditError('خطا در ذخیره‌سازی تغییرات');
+      }
+    } catch {
+      setEditError('خطا در ذخیره‌سازی تغییرات');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleDeleteDesign = async () => {
+    if (!designToDelete) return;
+    await deleteDesign(designToDelete.id);
+    setDesigns(prev => prev.filter(d => d.id !== designToDelete.id));
+    setSelectedDesign(null);
+    setDesignToDelete(null);
+  };
+
+  const handleLogout = async () => {
+    logoutUserSession();
+    await signOutAuth();
+    navigate('/');
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#E5E7EB] flex items-center justify-center p-4" dir="rtl">
@@ -240,17 +354,25 @@ export default function Vitrin() {
 
           <div className="flex items-center gap-2">
             {isOwner && (
-              <button
-                type="button"
-                onClick={() => {
-                  logoutUserSession();
-                  navigate('/setup');
-                }}
-                className="p-1.5 bg-neutral-100 text-neutral-600 hover:text-red-600 rounded-lg text-xs font-bold transition-all"
-                title="خروج از حساب"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleOpenEditModal}
+                  className="p-1.5 bg-neutral-100 text-neutral-600 hover:text-[#EC4899] rounded-lg text-xs font-bold transition-all"
+                  title="ویرایش پروفایل"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="p-1.5 bg-neutral-100 text-neutral-600 hover:text-red-600 rounded-lg text-xs font-bold transition-all"
+                  title="خروج از حساب"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </>
             )}
 
             <button
@@ -298,6 +420,12 @@ export default function Vitrin() {
                 <MapPin className="w-3.5 h-3.5 text-[#EC4899]" fill="currentColor" />
                 <span>{tech.city}</span>
               </div>
+
+              {tech.address && !isScrolled && (
+                <p className="text-[10px] text-neutral-400 font-semibold mt-1.5 leading-relaxed max-w-xs px-4">
+                  {tech.address}
+                </p>
+              )}
 
               {/* Social Contact Navbar Bar */}
               <div className="flex items-center justify-center gap-2 mt-4 w-full max-w-xs">
@@ -387,6 +515,21 @@ export default function Vitrin() {
                       <Clock className="w-3 h-3 text-pink-300" />
                       <span>{item.duration ? `${item.duration / 60} ساعت` : '۲ ساعت'}</span>
                     </div>
+
+                    {/* Owner-only delete action */}
+                    {isOwner && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDesignToDelete(item);
+                        }}
+                        className="absolute top-2 left-2 bg-white/90 text-neutral-500 hover:text-red-600 rounded-full p-1.5 shadow transition-all"
+                        title="حذف نمونه‌کار"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
 
                   {/* Title & Price Footer */}
@@ -588,6 +731,176 @@ export default function Vitrin() {
                   className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-bold rounded-xl"
                 >
                   ثبت در ویترین
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================
+            EDIT PROFILE MODAL FOR OWNER
+            ============================================ */}
+        {showEditModal && (
+          <div className="absolute inset-0 bg-black/60 z-50 flex flex-col justify-end">
+            <div className="bg-white rounded-t-[24px] p-6 max-h-[92%] overflow-y-auto no-scrollbar space-y-4">
+              <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
+                <h3 className="text-xs font-extrabold text-neutral-900">ویرایش پروفایل سالن</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="p-1 text-neutral-400 hover:text-neutral-700"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Avatar */}
+              <div className="flex flex-col items-center justify-center py-1">
+                <label className="relative cursor-pointer group">
+                  <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-[#EC4899] p-0.5">
+                    <img
+                      src={editInfo.avatar_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop'}
+                      alt="Avatar"
+                      className="w-full h-full object-cover rounded-full"
+                    />
+                  </div>
+                  <div className="absolute bottom-0 left-0 bg-[#EC4899] text-white rounded-full p-1.5 shadow group-hover:bg-[#DB2777] transition-all">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleEditAvatarUpload(e.target.files?.[0] || null)}
+                  />
+                </label>
+                {uploadingAvatar && (
+                  <span className="text-[10px] text-[#EC4899] font-bold mt-2 animate-pulse">در حال آپلود...</span>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700">نام سالن یا ناخن‌کار <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right"
+                  value={editInfo.name || ''}
+                  onChange={(e) => setEditInfo(prev => ({ ...prev, name: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700">شهر محل فعالیت</label>
+                <select
+                  className="w-full px-3 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right cursor-pointer"
+                  value={editInfo.city || ''}
+                  onChange={(e) => setEditInfo(prev => ({ ...prev, city: e.target.value }))}
+                >
+                  {POPULAR_CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  {editInfo.city && !POPULAR_CITIES.includes(editInfo.city) && (
+                    <option value={editInfo.city}>{editInfo.city}</option>
+                  )}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700">آدرس سالن <span className="text-red-500">*</span></label>
+                <textarea
+                  rows={2}
+                  className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right resize-none"
+                  value={editInfo.address || ''}
+                  onChange={(e) => setEditInfo(prev => ({ ...prev, address: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
+                  <Instagram className="w-3.5 h-3.5 text-[#EC4899]" />
+                  <span>آیدی اینستاگرام</span>
+                </label>
+                <input
+                  type="text"
+                  className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-left dir-ltr"
+                  value={editInfo.instagram || ''}
+                  onChange={(e) => setEditInfo(prev => ({ ...prev, instagram: e.target.value.replace('@', '').trim() }))}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-neutral-700 flex items-center gap-1">
+                    <MessageCircle className="w-3.5 h-3.5 text-green-600" />
+                    <span>شماره واتس‌اپ</span>
+                  </label>
+                  <input
+                    type="tel"
+                    className="w-full px-3.5 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-left dir-ltr"
+                    value={editInfo.whatsapp || ''}
+                    onChange={(e) => setEditInfo(prev => ({ ...prev, whatsapp: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-neutral-700 flex items-center gap-1">
+                    <Send className="w-3.5 h-3.5 text-blue-500" />
+                    <span>آیدی تلگرام</span>
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full px-3.5 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-left dir-ltr"
+                    value={editInfo.telegram || ''}
+                    onChange={(e) => setEditInfo(prev => ({ ...prev, telegram: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              {editError && (
+                <div className="bg-red-50 text-red-500 px-4 py-3 rounded-xl text-xs font-semibold border border-red-100 text-right">
+                  {editError}
+                </div>
+              )}
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={handleSaveProfile}
+                  disabled={savingProfile || uploadingAvatar}
+                  className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-bold rounded-xl disabled:opacity-60"
+                >
+                  {savingProfile ? 'در حال ذخیره...' : 'ذخیره تغییرات'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================
+            DELETE DESIGN CONFIRMATION FOR OWNER
+            ============================================ */}
+        {designToDelete && (
+          <div className="absolute inset-0 bg-black/60 z-[60] flex items-center justify-center p-6">
+            <div className="bg-white rounded-[20px] p-5 w-full max-w-xs text-center space-y-4">
+              <Trash2 className="w-8 h-8 text-red-500 mx-auto" />
+              <div>
+                <h3 className="text-xs font-extrabold text-neutral-900">حذف نمونه‌کار</h3>
+                <p className="text-[11px] text-neutral-500 font-semibold mt-1.5 leading-relaxed">
+                  آیا از حذف «{designToDelete.title}» مطمئن هستید؟ این عمل غیرقابل بازگشت است.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDeleteDesign}
+                  className="w-1/2 py-2.5 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold rounded-xl transition-all"
+                >
+                  بله، حذف کن
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDesignToDelete(null)}
+                  className="w-1/2 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 text-[11px] font-bold rounded-xl transition-all"
+                >
+                  لغو
                 </button>
               </div>
             </div>

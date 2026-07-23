@@ -1,23 +1,25 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getAllNailTechs, getDesigns } from '../lib/db';
+import { getAllNailTechs, getDesigns, getCurrentUserSession } from '../lib/db';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
-import { 
-  Search, 
-  MapPin, 
-  Instagram, 
-  ChevronLeft, 
-  UserPlus, 
-  Sparkles, 
+import {
+  Search,
+  MapPin,
+  Instagram,
+  ChevronLeft,
+  Sparkles,
   PlusCircle,
   Smartphone,
   Wifi,
-  BatteryMedium
+  BatteryMedium,
+  Store,
+  CircleUserRound
 } from 'lucide-react';
 
 export default function TechList() {
   const navigate = useNavigate();
+  const currentUser = getCurrentUserSession();
   const [techs, setTechs] = useState<NailTech[]>([]);
   const [techDesigns, setTechDesigns] = useState<Record<string, Design[]>>({});
   const [loading, setLoading] = useState(true);
@@ -99,14 +101,25 @@ export default function TechList() {
                 <p className="text-[11px] text-neutral-400 font-semibold mt-0.5">مشاهده نمونه‌کارها و رزرو مستقیم نوبت</p>
               </div>
 
-              <button
-                type="button"
-                onClick={() => navigate('/setup')}
-                className="bg-pink-50 hover:bg-pink-100 text-[#EC4899] px-3.5 py-2 rounded-xl text-xs font-bold border border-pink-100/50 flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>ثبت‌نام ناخن‌کار</span>
-              </button>
+              {currentUser ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/vitrin/${currentUser.slug}`)}
+                  className="bg-pink-50 hover:bg-pink-100 text-[#EC4899] px-3.5 py-2 rounded-xl text-xs font-bold border border-pink-100/50 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <CircleUserRound className="w-4 h-4" />
+                  <span>پروفایل من</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate('/auth')}
+                  className="bg-[#EC4899] hover:bg-[#DB2777] text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                >
+                  <Store className="w-4 h-4" />
+                  <span>ثبت سالن</span>
+                </button>
+              )}
             </div>
 
             {/* Search Input */}
@@ -240,14 +253,25 @@ export default function TechList() {
 
         {/* Bottom Bar */}
         <div className="absolute md:sticky bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-neutral-100 z-20 shrink-0 flex items-center justify-between">
-          <button
-            type="button"
-            className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[16px] text-center transition-all cursor-pointer flex items-center justify-center gap-2"
-            onClick={() => navigate('/setup')}
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>ثبت‌نام و راه‌اندازی ویترین من</span>
-          </button>
+          {currentUser ? (
+            <button
+              type="button"
+              className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[16px] text-center transition-all cursor-pointer flex items-center justify-center gap-2"
+              onClick={() => navigate(`/vitrin/${currentUser.slug}`)}
+            >
+              <CircleUserRound className="w-4 h-4" />
+              <span>مشاهده ویترین من</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[16px] text-center transition-all cursor-pointer flex items-center justify-center gap-2"
+              onClick={() => navigate('/auth')}
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>ثبت سالن و ساخت ویترین</span>
+            </button>
+          )}
         </div>
 
       </div>

@@ -9,14 +9,15 @@ export interface NailTech {
   id: string;
   slug: string;
   username: string;
-  password_hash?: string;
+  email: string;
   name: string;
   city: string;
+  address?: string;
   instagram: string;
   whatsapp?: string;
   telegram?: string;
   avatar_url: string;
-  mobile: string;
+  mobile?: string;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +37,12 @@ export interface Design {
 // Global runtime diagnostic flags
 export let lastCloudError: string | null = null;
 export let isCloudFallbackActive = false;
+
+// Reset the flags once a cloud operation succeeds so the warning banner clears
+function markCloudHealthy(): void {
+  lastCloudError = null;
+  isCloudFallbackActive = false;
+}
 
 // ============================================
 // SESSION MANAGERS
@@ -117,139 +124,32 @@ export function saveLocalDesigns(designs: Design[]): void {
 }
 
 // ============================================
-// DEFAULT SEED DATA IF EMPTY
+// LEGACY DEMO DATA CLEANUP
 // ============================================
 
-export const SEED_NAIL_TECHS: NailTech[] = [
-  {
-    id: 'tech-001',
-    slug: 'sara_nails',
-    username: 'sara_nails',
-    password_hash: '123456',
-    name: 'سالن تخصصی ناخن سارا',
-    city: 'تهران',
-    instagram: 'sara_nailart',
-    whatsapp: '09127579476',
-    telegram: 'sara_nailart',
-    avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop',
-    mobile: '09127579476',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'tech-002',
-    slug: 'nikoo_dehpanah',
-    username: 'nikoo_dehpanah',
-    password_hash: '123456',
-    name: 'خدمات تخصصی ناخن نیکو',
-    city: 'اصفهان',
-    instagram: 'nikoo_dehpanah',
-    whatsapp: '09131112233',
-    telegram: 'nikoo_dehpanah',
-    avatar_url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=300&fit=crop',
-    mobile: '09131112233',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'tech-003',
-    slug: 'maryam_shakeri',
-    username: 'maryam_shakeri',
-    password_hash: '123456',
-    name: 'سالن زیبایی و کاشت مریم',
-    city: 'کرج',
-    instagram: 'maryam_shakeri',
-    whatsapp: '09359998877',
-    telegram: 'maryam_shakeri',
-    avatar_url: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=300&h=300&fit=crop',
-    mobile: '09359998877',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }
-];
+// Earlier builds seeded fake salons/designs into localStorage (ids tech-001…,
+// des-001…). Those ids are not valid UUIDs and 400 every cloud query, so strip
+// them out — only real registered data should ever be shown.
+const LEGACY_SEED_TECH_IDS = ['tech-001', 'tech-002', 'tech-003'];
+const LEGACY_SEED_DESIGN_IDS = ['des-001', 'des-002', 'des-003', 'des-004', 'des-005', 'des-006'];
 
-export const SEED_DESIGNS: Design[] = [
-  {
-    id: 'des-001',
-    tech_id: 'tech-001',
-    title: 'ژلیش صورتی کریستالی با دیزاین اکلیل',
-    image_url: 'https://images.unsplash.com/photo-1604654894610-df63bc536371?w=500&h=500&fit=crop',
-    tags: ['صورتی', 'فانتزی', 'دیزاین'],
-    price: 380000,
-    duration: 120,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'des-002',
-    tech_id: 'tech-001',
-    title: 'کاشت آکریلیک فرانسوی مات',
-    image_url: 'https://images.unsplash.com/photo-1632345031435-8727f6897d53?w=500&h=500&fit=crop',
-    tags: ['سفید', 'فرنچ', 'ساده'],
-    price: 450000,
-    duration: 150,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'des-003',
-    tech_id: 'tech-001',
-    title: 'دیزاین تابستانی آبرنگی بنفش',
-    image_url: 'https://images.unsplash.com/photo-1519014816548-bf5fe059798b?w=500&h=500&fit=crop',
-    tags: ['بنفش', 'آمبره', 'فانتزی'],
-    price: 520000,
-    duration: 180,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'des-004',
-    tech_id: 'tech-002',
-    title: 'لمینت ناخن نود کلاسیک',
-    image_url: 'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=500&h=500&fit=crop',
-    tags: ['نود', 'ساده'],
-    price: 290000,
-    duration: 90,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'des-005',
-    tech_id: 'tech-002',
-    title: 'طراحی خاص مشکی متالیک',
-    image_url: 'https://images.unsplash.com/photo-1599940824399-b87987ceb72a?w=500&h=500&fit=crop',
-    tags: ['مشکی', 'تم'],
-    price: 490000,
-    duration: 120,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'des-006',
-    tech_id: 'tech-003',
-    title: 'دیزاین قرمز مجلسی براق',
-    image_url: 'https://images.unsplash.com/photo-1582298538104-fe2e74c27f59?w=500&h=500&fit=crop',
-    tags: ['قرمز', 'عروسی'],
-    price: 420000,
-    duration: 120,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }
-];
+function purgeLegacySeedData(): void {
+  try {
+    const techs = getLocalTechs();
+    const cleanTechs = techs.filter(t => !LEGACY_SEED_TECH_IDS.includes(t.id));
+    if (cleanTechs.length !== techs.length) saveLocalTechs(cleanTechs);
 
-export function ensureLocalSeedData(): void {
-  const existingTechs = getLocalTechs();
-  if (existingTechs.length === 0) {
-    saveLocalTechs(SEED_NAIL_TECHS);
-  }
-  const existingDesigns = getLocalDesigns();
-  if (existingDesigns.length === 0) {
-    saveLocalDesigns(SEED_DESIGNS);
+    const designs = getLocalDesigns();
+    const cleanDesigns = designs.filter(
+      d => !LEGACY_SEED_DESIGN_IDS.includes(d.id) && !LEGACY_SEED_TECH_IDS.includes(d.tech_id)
+    );
+    if (cleanDesigns.length !== designs.length) saveLocalDesigns(cleanDesigns);
+  } catch {
+    // ignore
   }
 }
 
-// Call seed initialization on load
-ensureLocalSeedData();
+purgeLegacySeedData();
 
 // ============================================
 // NAIL TECH DB OPERATIONS
@@ -258,14 +158,18 @@ ensureLocalSeedData();
 export async function getAllNailTechs(): Promise<NailTech[]> {
   if (hasSupabaseCredentials) {
     try {
+      // Sort client-side so a missing created_at column can't 400 the whole query
       const { data, error } = await supabase
         .from('nail_techs')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
 
-      if (!error && data && data.length > 0) {
+      // Cloud is the source of truth on success — even an empty list is real data
+      if (!error && data) {
+        markCloudHealthy();
         addLog('info', 'database', `دریافت ${data.length} ناخن‌کار از Supabase`);
-        return data;
+        return [...data].sort(
+          (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
       }
       if (error) {
         lastCloudError = error.message;
@@ -285,20 +189,20 @@ export async function getAllNailTechs(): Promise<NailTech[]> {
   return getLocalTechs();
 }
 
-export async function getNailTechByPhoneOrUsername(query: string): Promise<NailTech | null> {
-  const cleaned = query.trim().replace('@', '');
+export async function getNailTechByEmail(email: string): Promise<NailTech | null> {
+  const cleaned = email.trim().toLowerCase();
   if (!cleaned) return null;
 
   if (hasSupabaseCredentials) {
     try {
-      // Try match by mobile OR username OR slug
       const { data, error } = await supabase
         .from('nail_techs')
         .select('*')
-        .or(`mobile.eq.${cleaned},username.eq.${cleaned},slug.eq.${cleaned}`)
+        .eq('email', cleaned)
         .maybeSingle();
 
       if (!error && data) {
+        markCloudHealthy();
         addLog('info', 'database', `ناخن‌کار در Supabase یافت شد: ${data.name}`);
         return data;
       }
@@ -315,12 +219,7 @@ export async function getNailTechByPhoneOrUsername(query: string): Promise<NailT
 
   // Fallback to local storage
   const techs = getLocalTechs();
-  return techs.find(t => 
-    t.mobile === cleaned || 
-    t.username === cleaned || 
-    t.slug === cleaned ||
-    t.mobile?.replace(/^0/, '') === cleaned.replace(/^0/, '')
-  ) || null;
+  return techs.find(t => t.email?.toLowerCase() === cleaned) || null;
 }
 
 export async function getNailTechBySlug(slug: string): Promise<NailTech | null> {
@@ -334,7 +233,10 @@ export async function getNailTechBySlug(slug: string): Promise<NailTech | null> 
         .eq('slug', cleanedSlug)
         .maybeSingle();
 
-      if (!error && data) return data;
+      if (!error && data) {
+        markCloudHealthy();
+        return data;
+      }
       if (error) {
         lastCloudError = error.message;
         isCloudFallbackActive = true;
@@ -361,32 +263,37 @@ export async function saveNailTech(data: {
   id?: string;
   slug: string;
   username?: string;
-  password_hash?: string;
+  email: string;
   name: string;
   city: string;
+  address?: string;
   instagram: string;
   whatsapp?: string;
   telegram?: string;
   avatar_url?: string;
-  mobile: string;
+  mobile?: string;
 }): Promise<NailTech | null> {
   const now = new Date().toISOString();
   const techId = data.id || crypto.randomUUID();
   const username = data.username || data.slug || techId.slice(0, 8);
 
+  // Preserve original creation date when updating an existing profile
+  const existingLocal = getLocalTechs().find(t => t.id === techId);
+
   const payload: NailTech = {
     id: techId,
     slug: data.slug || username,
     username,
-    password_hash: data.password_hash || '123456',
+    email: (data.email || '').trim().toLowerCase(), // may be empty for pre-refactor local profiles
     name: data.name,
     city: data.city,
+    address: data.address || '',
     instagram: data.instagram,
-    whatsapp: data.whatsapp || data.mobile,
-    telegram: data.telegram || data.instagram,
+    whatsapp: data.whatsapp || '',
+    telegram: data.telegram || '',
     avatar_url: data.avatar_url || '',
-    mobile: data.mobile,
-    created_at: now,
+    mobile: data.mobile || '',
+    created_at: existingLocal?.created_at || now,
     updated_at: now,
   };
 
@@ -402,6 +309,7 @@ export async function saveNailTech(data: {
 
       if (!error && result) {
         savedInCloud = true;
+        markCloudHealthy();
         addLog('success', 'database', `پروفایل ناخن‌کار با موفقیت در Supabase ذخیره شد: ${payload.name}`);
       } else if (error) {
         lastCloudError = error.message;
@@ -441,14 +349,18 @@ export async function saveNailTech(data: {
 export async function getDesigns(techId: string): Promise<Design[]> {
   if (hasSupabaseCredentials) {
     try {
+      // Sort client-side so a missing created_at column can't 400 the whole query
       const { data, error } = await supabase
         .from('designs')
         .select('*')
-        .eq('tech_id', techId)
-        .order('created_at', { ascending: false });
+        .eq('tech_id', techId);
 
-      if (!error && data && data.length > 0) {
-        return data;
+      // Cloud is the source of truth on success — even an empty list is real data
+      if (!error && data) {
+        markCloudHealthy();
+        return [...data].sort(
+          (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+        );
       }
       if (error) {
         lastCloudError = error.message;
@@ -493,6 +405,7 @@ export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'update
 
       if (!error && result) {
         savedInCloud = true;
+        markCloudHealthy();
         addLog('success', 'database', `نمونه‌کار جدید با موفقیت در Supabase اضافه شد: ${newDesign.title}`);
       } else if (error) {
         lastCloudError = error.message;

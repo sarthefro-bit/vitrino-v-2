@@ -26,17 +26,24 @@ CREATE TABLE IF NOT EXISTS public.nail_techs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug TEXT UNIQUE NOT NULL,
     username TEXT UNIQUE,
-    password_hash TEXT DEFAULT '123456',
+    email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     city TEXT NOT NULL,
+    address TEXT,
     instagram TEXT,
     whatsapp TEXT,
     telegram TEXT,
     avatar_url TEXT,
-    mobile TEXT NOT NULL,
+    mobile TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- 1b. Migration for existing installations (email OTP auth refactor)
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE public.nail_techs ADD COLUMN IF NOT EXISTS address TEXT;
+ALTER TABLE public.nail_techs DROP COLUMN IF EXISTS password_hash;
+ALTER TABLE public.nail_techs ALTER COLUMN mobile DROP NOT NULL;
 
 -- 2. Create designs Table
 CREATE TABLE IF NOT EXISTS public.designs (
@@ -50,6 +57,10 @@ CREATE TABLE IF NOT EXISTS public.designs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- 2b. Migration for existing designs tables missing timestamp columns
+ALTER TABLE public.designs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
+ALTER TABLE public.designs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL;
 
 -- 3. Enable RLS
 ALTER TABLE public.nail_techs ENABLE ROW LEVEL SECURITY;
@@ -79,7 +90,55 @@ CREATE POLICY "Public Avatars Access" ON storage.objects FOR ALL USING (bucket_i
 
 ---
 
-## 3. Secret Diagnostic Backlog Page
+## 3. Authentication Setup (Email OTP + Google)
+
+Vitrino now uses **Supabase Auth** with email one-time codes and Google sign-in.
+There is no phone/password login anymore. Configure the following in your
+Supabase Dashboard:
+
+### Email OTP (6-digit code)
+
+1. Go to **Authentication -> Providers -> Email** and make sure Email is enabled.
+2. Go to **Authentication -> Email Templates** and edit **BOTH** of these
+   templates (Supabase uses *Confirm signup* for first-time emails and
+   *Magic Link* for returning users):
+   - **Confirm signup**
+   - **Magic Link**
+
+   Include the code alongside (or instead of) the link:
+
+   ```html
+   <h2>کد ورود شما به ویترینو</h2>
+   <p>کد تأیید: <strong>{{ .Token }}</strong></p>
+   <p>یا روی این لینک بزنید: <a href="{{ .ConfirmationURL }}">ورود به ویترینو</a></p>
+   ```
+
+   The `{{ .Token }}` variable is required — without it users receive only a
+   link instead of the 6-digit code the app asks for. (Keeping
+   `{{ .ConfirmationURL }}` too lets users choose either method.)
+3. (Optional) Tune OTP expiry under **Authentication -> Providers -> Email ->
+   Email OTP Expiration** (default 1 hour; the app suggests 5 minutes).
+
+### Google Sign-In
+
+1. Create OAuth credentials in Google Cloud Console (Web application) and add
+   `https://<your-project-ref>.supabase.co/auth/v1/callback` as an authorized
+   redirect URI.
+2. In Supabase go to **Authentication -> Providers -> Google**, enable it and
+   paste the Client ID / Client Secret.
+3. Add your app URL(s) (e.g. `http://localhost:3000`) to
+   **Authentication -> URL Configuration -> Redirect URLs**. The app returns
+   users to `/auth` after Google sign-in.
+
+### Demo mode (no Supabase credentials)
+
+When `VITE_SUPABASE_URL` / key are absent, the app runs fully offline:
+the OTP code is generated locally and shown right on the verification screen,
+and Google sign-in is disabled.
+
+---
+
+## 4. Secret Diagnostic Backlog Page
 
 Access the secret diagnostic dashboard at:
 
