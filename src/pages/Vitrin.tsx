@@ -12,6 +12,7 @@ import {
 } from '../lib/db';
 import { signOutAuth } from '../lib/auth';
 import { uploadImage } from '../lib/storage';
+import { AVATAR_PLACEHOLDER } from '../lib/avatar';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
 import {
@@ -259,7 +260,6 @@ export default function Vitrin() {
         whatsapp: editInfo.whatsapp || '',
         telegram: editInfo.telegram || '',
         avatar_url: editInfo.avatar_url || '',
-        mobile: tech.mobile,
       });
 
       if (updated) {
@@ -403,11 +403,11 @@ export default function Vitrin() {
               {/* Profile Avatar */}
               <div className={`rounded-full p-1 bg-gradient-to-tr from-[#FFF0F6] to-[#EC4899]/30 transition-all duration-300 ${isScrolled ? 'w-14 h-14 mb-2' : 'w-24 h-24 mb-3'}`}>
                 <img
-                  src={tech.avatar_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop'}
+                  src={tech.avatar_url || AVATAR_PLACEHOLDER}
                   alt={tech.name}
                   className="w-full h-full object-cover rounded-full"
                   onError={(e) => {
-                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop';
+                    (e.target as HTMLImageElement).src = AVATAR_PLACEHOLDER;
                   }}
                 />
               </div>
@@ -759,7 +759,7 @@ export default function Vitrin() {
                 <label className="relative cursor-pointer group">
                   <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-[#EC4899] p-0.5">
                     <img
-                      src={editInfo.avatar_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop'}
+                      src={editInfo.avatar_url || AVATAR_PLACEHOLDER}
                       alt="Avatar"
                       className="w-full h-full object-cover rounded-full"
                     />

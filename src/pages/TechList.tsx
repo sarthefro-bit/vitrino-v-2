@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { getAllNailTechs, getDesigns, getCurrentUserSession } from '../lib/db';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
+import { AVATAR_PLACEHOLDER } from '../lib/avatar';
 import {
   Search,
   MapPin,
@@ -181,11 +182,11 @@ export default function TechList() {
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-12 h-12 rounded-full p-0.5 bg-gradient-to-tr from-[#FFF0F6] to-[#EC4899]/30 shrink-0">
                           <img
-                            src={tech.avatar_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop'}
+                            src={tech.avatar_url || AVATAR_PLACEHOLDER}
                             alt={tech.name}
                             className="w-full h-full object-cover rounded-full"
                             onError={(e) => {
-                              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&h=150&fit=crop';
+                              (e.target as HTMLImageElement).src = AVATAR_PLACEHOLDER;
                             }}
                           />
                         </div>

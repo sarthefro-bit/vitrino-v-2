@@ -271,7 +271,6 @@ export async function saveNailTech(data: {
   whatsapp?: string;
   telegram?: string;
   avatar_url?: string;
-  mobile?: string;
 }): Promise<NailTech | null> {
   const now = new Date().toISOString();
   const techId = data.id || crypto.randomUUID();
@@ -280,6 +279,7 @@ export async function saveNailTech(data: {
   // Preserve original creation date when updating an existing profile
   const existingLocal = getLocalTechs().find(t => t.id === techId);
 
+  // No `mobile` here: the phone-number flow is gone and the cloud table has no such column
   const payload: NailTech = {
     id: techId,
     slug: data.slug || username,
@@ -292,7 +292,6 @@ export async function saveNailTech(data: {
     whatsapp: data.whatsapp || '',
     telegram: data.telegram || '',
     avatar_url: data.avatar_url || '',
-    mobile: data.mobile || '',
     created_at: existingLocal?.created_at || now,
     updated_at: now,
   };

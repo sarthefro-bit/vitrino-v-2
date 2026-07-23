@@ -218,7 +218,7 @@ export default function Auth() {
           instagram: 'sara_nailart',
           whatsapp: '09127579476',
           telegram: 'sara_nailart',
-          avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=300&fit=crop'
+          avatar_url: ''
         }));
 
         const sampleDesigns: Design[] = [
@@ -324,7 +324,7 @@ export default function Auth() {
     setNotice('');
 
     if (otpCode.trim().length < 6) {
-      setError('کد ۶ رقمی ارسال شده را کامل وارد کنید.');
+      setError('کد ارسال شده را کامل وارد کنید.');
       return;
     }
 
@@ -677,7 +677,7 @@ export default function Auth() {
               <div>
                 <h2 className="text-lg font-bold text-neutral-900">کد تأیید را وارد کنید</h2>
                 <p className="text-xs text-neutral-400 mt-1 font-semibold leading-relaxed">
-                  کد ۶ رقمی به <span className="font-mono text-[#EC4899] dir-ltr inline-block">{email}</span> ارسال شد.
+                  کد تأیید به <span className="font-mono text-[#EC4899] dir-ltr inline-block">{email}</span> ارسال شد.
                 </p>
               </div>
 
@@ -685,15 +685,15 @@ export default function Auth() {
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
                     <KeyRound className="w-3.5 h-3.5 text-[#EC4899]" />
-                    <span>کد ۶ رقمی</span>
+                    <span>کد تأیید</span>
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     autoComplete="one-time-code"
-                    maxLength={6}
-                    placeholder="••••••"
-                    className="w-full px-4 py-4 bg-neutral-50 border border-neutral-200 rounded-[16px] text-lg font-black tracking-[0.5em] focus:outline-none focus:border-[#EC4899] text-center dir-ltr"
+                    maxLength={10}
+                    placeholder="••••••••"
+                    className="w-full px-4 py-4 bg-neutral-50 border border-neutral-200 rounded-[16px] text-lg font-black tracking-[0.3em] focus:outline-none focus:border-[#EC4899] text-center dir-ltr"
                     value={otpCode}
                     onChange={(e) => {
                       setOtpCode(e.target.value.replace(/[^0-9۰-۹]/g, '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))));
