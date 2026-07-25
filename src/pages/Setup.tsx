@@ -528,21 +528,6 @@ export default function Setup() {
       <div className="phone-mockup-wrapper md:max-w-[700px] md:h-auto md:min-h-[850px] md:border-none md:rounded-[32px] md:shadow-[0_12px_45px_rgba(0,0,0,0.06)] bg-neutral-50 flex flex-col relative text-[#1F2937] font-sans">
         
         <OfflineWarningBanner />
-
-        {/* Status Bar (Hidden on Desktop) */}
-        <div className="bg-white text-neutral-900 px-6 py-2.5 flex justify-between items-center text-xs font-semibold select-none z-40 shrink-0 border-b border-neutral-100 md:hidden" dir="ltr">
-          <div>{currentTime}</div>
-          <div className="flex items-center gap-1.5">
-            <Smartphone className="w-3.5 h-3.5 opacity-80" />
-            <Wifi className="w-3.5 h-3.5 opacity-80" />
-            <BatteryMedium className="w-4 h-4 opacity-80" />
-          </div>
-        </div>
-
-        {/* ============================================
-            STEP 0: SPLASH LANDING CHOICE
-            ============================================ */}
-        {step === 'splash' && (
           <div className="flex-1 flex flex-col justify-between p-8 bg-white text-center">
             <div className="pt-8">
               <span className="text-[11px] font-bold text-[#EC4899] bg-pink-50 px-3 py-1 rounded-full border border-pink-100/50">
