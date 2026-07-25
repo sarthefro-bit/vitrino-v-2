@@ -124,32 +124,35 @@ export function saveLocalDesigns(designs: Design[]): void {
 }
 
 // ============================================
-// LEGACY DEMO DATA CLEANUP
+// LEGACY DEMO DATA CLEANUP & SEEDING
 // ============================================
 
-// Earlier builds seeded fake salons/designs into localStorage (ids tech-001…,
-// des-001…). Those ids are not valid UUIDs and 400 every cloud query, so strip
-// them out — only real registered data should ever be shown.
-const LEGACY_SEED_TECH_IDS = ['tech-001', 'tech-002', 'tech-003'];
-const LEGACY_SEED_DESIGN_IDS = ['des-001', 'des-002', 'des-003', 'des-004', 'des-005', 'des-006'];
+export const INITIAL_DEMO_DESIGNS: Design[] = [];
 
-function purgeLegacySeedData(): void {
+export function cleanDemoDataFromLocalStorage(): void {
   try {
-    const techs = getLocalTechs();
-    const cleanTechs = techs.filter(t => !LEGACY_SEED_TECH_IDS.includes(t.id));
-    if (cleanTechs.length !== techs.length) saveLocalTechs(cleanTechs);
+    const techs = getLocalTechs().filter(t => !t.id.startsWith('5a1a100'));
+    saveLocalTechs(techs);
 
-    const designs = getLocalDesigns();
-    const cleanDesigns = designs.filter(
-      d => !LEGACY_SEED_DESIGN_IDS.includes(d.id) && !LEGACY_SEED_TECH_IDS.includes(d.tech_id)
-    );
-    if (cleanDesigns.length !== designs.length) saveLocalDesigns(cleanDesigns);
-  } catch {
-    // ignore
+    const designs = getLocalDesigns().filter(d => !d.id.startsWith('5d1d100'));
+    saveLocalDesigns(designs);
+  } catch (e) {
+    console.error('Failed to clean demo data from localStorage:', e);
   }
 }
 
-purgeLegacySeedData();
+export function clearAllLocalData(): void {
+  try {
+    localStorage.removeItem(TECHS_KEY);
+    localStorage.removeItem(DESIGNS_KEY);
+    localStorage.removeItem(SESSION_KEY);
+    addLog('info', 'database', 'حافظه محلی کاملاً پاکسازی شد.');
+  } catch (e) {
+    console.error('Failed to clear local storage:', e);
+  }
+}
+
+cleanDemoDataFromLocalStorage();
 
 // ============================================
 // NAIL TECH DB OPERATIONS
@@ -158,20 +161,17 @@ purgeLegacySeedData();
 export async function getAllNailTechs(): Promise<NailTech[]> {
   if (hasSupabaseCredentials) {
     try {
-      // Sort client-side so a missing created_at column can't 400 the whole query
       const { data, error } = await supabase
         .from('nail_techs')
         .select('*');
 
-      // Cloud is the source of truth on success — even an empty list is real data
       if (!error && data) {
         markCloudHealthy();
         addLog('info', 'database', `دریافت ${data.length} ناخن‌کار از Supabase`);
         return [...data].sort(
           (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
         );
-      }
-      if (error) {
+      } else if (error) {
         lastCloudError = error.message;
         isCloudFallbackActive = true;
         addLog('error', 'database', 'خطای Supabase در دریافت لیست ناخن‌کاران. انتقال به ذخیره‌سازی محلی.', error);
@@ -185,8 +185,11 @@ export async function getAllNailTechs(): Promise<NailTech[]> {
     isCloudFallbackActive = true;
   }
 
+  const localTechs = getLocalTechs().filter(t => !t.id.startsWith('5a1a100'));
   addLog('info', 'database', 'دریافت لیست ناخن‌کاران از ذخیره‌سازی محلی');
-  return getLocalTechs();
+  return localTechs.sort(
+    (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+  );
 }
 
 export async function getNailTechByEmail(email: string): Promise<NailTech | null> {
@@ -248,11 +251,10 @@ export async function getNailTechBySlug(slug: string): Promise<NailTech | null> 
     }
   }
 
-  const techs = getLocalTechs();
+  const techs = getLocalTechs().filter(t => !t.id.startsWith('5a1a100'));
   const found = techs.find(t => t.slug.toLowerCase() === cleanedSlug || t.username?.toLowerCase() === cleanedSlug);
   if (found) return found;
 
-  // Fallback first item if default route
   if ((slug === 'profile' || slug === ':slug') && techs.length > 0) {
     return techs[0];
   }
@@ -348,20 +350,17 @@ export async function saveNailTech(data: {
 export async function getDesigns(techId: string): Promise<Design[]> {
   if (hasSupabaseCredentials) {
     try {
-      // Sort client-side so a missing created_at column can't 400 the whole query
       const { data, error } = await supabase
         .from('designs')
         .select('*')
         .eq('tech_id', techId);
 
-      // Cloud is the source of truth on success — even an empty list is real data
       if (!error && data) {
         markCloudHealthy();
         return [...data].sort(
           (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
         );
-      }
-      if (error) {
+      } else if (error) {
         lastCloudError = error.message;
         isCloudFallbackActive = true;
         addLog('warn', 'database', `خطا در دریافت نمونه‌کارهای Supabase برای ${techId}: ${error.message}`);
@@ -372,10 +371,10 @@ export async function getDesigns(techId: string): Promise<Design[]> {
     }
   }
 
-  const designs = getLocalDesigns();
-  return designs
+  const localDesigns = getLocalDesigns().filter(d => !d.id.startsWith('5d1d100'));
+  return localDesigns
     .filter(d => d.tech_id === techId)
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 }
 
 export async function addDesign(data: Omit<Design, 'id' | 'created_at' | 'updated_at'>): Promise<Design | null> {
@@ -454,4 +453,36 @@ export async function deleteDesign(designId: string): Promise<boolean> {
   const filtered = designs.filter(d => d.id !== designId);
   saveLocalDesigns(filtered);
   return true;
+}
+
+export async function updateDesign(updatedDesign: Design): Promise<Design | null> {
+  const now = new Date().toISOString();
+  const payload = { ...updatedDesign, updated_at: now };
+
+  if (hasSupabaseCredentials) {
+    try {
+      const { data: result, error } = await supabase
+        .from('designs')
+        .upsert(payload)
+        .select()
+        .single();
+
+      if (!error && result) {
+        markCloudHealthy();
+        addLog('success', 'database', `نمونه‌کار با موفقیت به روزرسانی شد: ${payload.title}`);
+      }
+    } catch (err) {
+      console.error('Error updating design in Supabase:', err);
+    }
+  }
+
+  const designs = getLocalDesigns();
+  const index = designs.findIndex(d => d.id === payload.id);
+  if (index !== -1) {
+    designs[index] = payload;
+  } else {
+    designs.unshift(payload);
+  }
+  saveLocalDesigns(designs);
+  return payload;
 }

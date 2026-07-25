@@ -15,6 +15,7 @@ import {
   getAuthedEmail,
 } from '../lib/auth';
 import { uploadImage } from '../lib/storage';
+import { getPastedImageFile, readImageFromClipboard } from '../lib/clipboard';
 import type { NailTech, Design } from '../lib/db';
 import OfflineWarningBanner from '../components/OfflineWarningBanner';
 import {
@@ -26,18 +27,11 @@ import {
   Smartphone,
   Wifi,
   BatteryMedium,
-  Instagram,
-  Mail,
-  KeyRound,
-  MapPin,
-  MessageCircle,
-  Send,
   Copy,
-  ExternalLink,
   Plus,
-  Sparkles,
   ArrowRight,
-  Home
+  Home,
+  Clipboard
 } from 'lucide-react';
 
 const POPULAR_CITIES = [
@@ -73,10 +67,18 @@ const INITIAL_STYLES = [
   'دیزاین'
 ];
 
-// Handle validation: letters, digits, dots, underscores, 1-30 chars
-function isValidInstagramHandle(handle: string): boolean {
-  const cleaned = handle.replace('@', '').trim();
-  return /^[a-zA-Z0-9._]{1,30}$/.test(cleaned);
+function getColorDotClass(col: string): string {
+  switch (col) {
+    case 'بنفش': return 'bg-purple-500';
+    case 'سبز': return 'bg-emerald-500';
+    case 'آبی': return 'bg-blue-500';
+    case 'صورتی': return 'bg-pink-400';
+    case 'قرمز': return 'bg-red-500';
+    case 'نود': return 'bg-amber-300';
+    case 'سفید': return 'bg-neutral-100 border border-neutral-300';
+    case 'مشکی': return 'bg-neutral-900';
+    default: return 'bg-[#DB2777]';
+  }
 }
 
 // Build a URL-safe slug from the email's local part, e.g. sara.nails@x.com -> sara_nails
@@ -93,11 +95,12 @@ export default function Auth() {
   // 'email':   ask only for email
   // 'otp':     verify the code sent to that email
   // -- new users continue with profile completion: --
-  // 'profile': salon name, city, address + avatar (required info)
-  // 'socials': instagram / whatsapp / telegram (optional)
+  // 'profile': salon name, mobile, city, instagram (required info)
+  // 'socials': telegram, address (optional)
   // 'works':   upload نمونه‌کارها
-  // 'ready':   share link, go to profile
-  const [step, setStep] = useState<'checking' | 'email' | 'otp' | 'profile' | 'socials' | 'works' | 'ready'>('checking');
+  // 'avatar':  upload profile picture (optional/skip)
+  // 'ready':   congrats, view vitrin, share link
+  const [step, setStep] = useState<'checking' | 'email' | 'otp' | 'profile' | 'socials' | 'works' | 'avatar' | 'ready'>('checking');
 
   const [email, setEmail] = useState('');
   const [otpCode, setOtpCode] = useState('');
@@ -118,30 +121,69 @@ export default function Auth() {
 
   const [designs, setDesigns] = useState<Design[]>([]);
 
-  // City dropdown state
+  const [hasWhatsapp, setHasWhatsapp] = useState(true);
+
+  // Dynamic colors and styles lists
   const [showCityDropdown, setShowCityDropdown] = useState(false);
   const [citySearchQuery, setCitySearchQuery] = useState('');
   const cityDropdownRef = useRef<HTMLDivElement>(null);
 
   // Add work sample modal state
   const [showAddModal, setShowAddModal] = useState(false);
+  const [availableColorOptions, setAvailableColorOptions] = useState(
+    INITIAL_COLORS.map(c => ({ name: c, dotClass: getColorDotClass(c) }))
+  );
+  const [availableStyleTags, setAvailableStyleTags] = useState<string[]>(INITIAL_STYLES);
+  const [showAddColorInput, setShowAddColorInput] = useState(false);
+  const [newColorInput, setNewColorInput] = useState('');
+  const [showAddStyleInput, setShowAddStyleInput] = useState(false);
+  const [newStyleInput, setNewStyleInput] = useState('');
+
   const [newDesign, setNewDesign] = useState<{
     image_url: string;
     title: string;
     tags: string[];
     price: string;
     duration: string;
-    colorTag: string;
-    styleTag: string;
+    selectedColors: string[];
+    selectedStyles: string[];
   }>({
     image_url: '',
     title: '',
     tags: [],
     price: '',
     duration: '۲ ساعت',
-    colorTag: 'صورتی',
-    styleTag: 'فانتزی'
+    selectedColors: ['صورتی'],
+    selectedStyles: ['فانتزی']
   });
+
+  const handleAddNewColorTag = () => {
+    if (!newColorInput.trim()) return;
+    const name = newColorInput.trim();
+    if (!availableColorOptions.some(c => c.name === name)) {
+      setAvailableColorOptions(prev => [...prev, { name, dotClass: 'bg-pink-400' }]);
+    }
+    setNewDesign(prev => ({
+      ...prev,
+      selectedColors: prev.selectedColors.includes(name) ? prev.selectedColors : [...prev.selectedColors, name]
+    }));
+    setNewColorInput('');
+    setShowAddColorInput(false);
+  };
+
+  const handleAddNewStyleTag = () => {
+    if (!newStyleInput.trim()) return;
+    const tag = newStyleInput.trim();
+    if (!availableStyleTags.includes(tag)) {
+      setAvailableStyleTags(prev => [...prev, tag]);
+    }
+    setNewDesign(prev => ({
+      ...prev,
+      selectedStyles: prev.selectedStyles.includes(tag) ? prev.selectedStyles : [...prev.selectedStyles, tag]
+    }));
+    setNewStyleInput('');
+    setShowAddStyleInput(false);
+  };
 
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -353,6 +395,30 @@ export default function Auth() {
     // On success the browser redirects to Google; nothing else to do here.
   };
 
+  const handleProfileNext = () => {
+    setError('');
+    if (!techInfo.name?.trim()) {
+      setError('نام آرایشگاه الزامی است.');
+      return;
+    }
+    if (!techInfo.whatsapp?.trim()) {
+      setError('شماره موبایل الزامی است.');
+      return;
+    }
+    if (!techInfo.city?.trim()) {
+      setError('انتخاب شهر الزامی است.');
+      return;
+    }
+    if (!techInfo.instagram?.trim()) {
+      setError('آیدی اینستاگرام الزامی است.');
+      return;
+    }
+    if (!techInfo.address?.trim()) {
+      setTechInfo(prev => ({ ...prev, address: prev.city || 'تهران' }));
+    }
+    setStep('socials');
+  };
+
   const handleAvatarUpload = async (file: File | null) => {
     if (!file) return;
     setUploadingAvatar(true);
@@ -371,21 +437,13 @@ export default function Auth() {
     }
   };
 
-  const handleProfileNext = () => {
+  const handleWorksNext = () => {
+    if (designs.length === 0) {
+      setError('لطفاً حداقل یک نمونه‌کار وارد کنید.');
+      return;
+    }
     setError('');
-    if (!techInfo.name?.trim()) {
-      setError('نام سالن یا ناخن‌کار الزامی است.');
-      return;
-    }
-    if (!techInfo.city?.trim()) {
-      setError('انتخاب شهر الزامی است.');
-      return;
-    }
-    if (!techInfo.address?.trim()) {
-      setError('آدرس سالن الزامی است.');
-      return;
-    }
-    setStep('socials');
+    setStep('avatar');
   };
 
   const handleDesignImageUpload = async (file: File | null) => {
@@ -403,6 +461,39 @@ export default function Auth() {
       setError('خطا در آپلود تصویر نمونه‌کار');
     } finally {
       setUploadingDesign(false);
+    }
+  };
+
+  // Global paste handler for Ctrl+V
+  useEffect(() => {
+    if (!showAddModal && step !== 'avatar') return;
+
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      const file = getPastedImageFile(e);
+      if (file) {
+        e.preventDefault();
+        if (showAddModal) {
+          handleDesignImageUpload(file);
+        } else if (step === 'avatar') {
+          handleAvatarUpload(file);
+        }
+      }
+    };
+
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [showAddModal, step]);
+
+  const handlePasteFromClipboardClick = async (target: 'design' | 'avatar') => {
+    const file = await readImageFromClipboard();
+    if (file) {
+      if (target === 'design') {
+        handleDesignImageUpload(file);
+      } else {
+        handleAvatarUpload(file);
+      }
+    } else {
+      alert('تصویری در حافظه کپی (Clipboard) یافت نشد. عکسی را کپی کرده و Ctrl + V را فشار دهید.');
     }
   };
 
@@ -430,12 +521,14 @@ export default function Auth() {
     else if (newDesign.duration.includes('۱')) durationMins = 60;
     else if (newDesign.duration.includes('۳۰')) durationMins = 30;
 
+    const allTags = Array.from(new Set([...newDesign.selectedColors, ...newDesign.selectedStyles]));
+
     const sample: Design = {
       id: crypto.randomUUID(),
       tech_id: 'temp',
       title: newDesign.title,
       image_url: newDesign.image_url,
-      tags: [newDesign.colorTag, newDesign.styleTag].filter(Boolean),
+      tags: allTags.length > 0 ? allTags : ['ساده'],
       price: priceNum,
       duration: durationMins,
       created_at: new Date().toISOString(),
@@ -449,8 +542,8 @@ export default function Auth() {
       tags: [],
       price: '',
       duration: '۲ ساعت',
-      colorTag: 'صورتی',
-      styleTag: 'فانتزی'
+      selectedColors: ['صورتی'],
+      selectedStyles: ['فانتزی']
     });
     setShowAddModal(false);
     setError('');
@@ -559,9 +652,13 @@ export default function Auth() {
             STEP: CHECKING EXISTING SESSION
             ============================================ */}
         {step === 'checking' && (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white text-center gap-3">
-            <span className="loading loading-spinner text-[#EC4899]" />
-            <p className="text-xs font-bold text-neutral-500">در حال بررسی وضعیت ورود...</p>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white text-center gap-4 min-h-[500px]">
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-[#DB2777] animate-bounce [animation-delay:-0.3s]" />
+              <div className="w-3 h-3 rounded-full bg-[#DB2777] animate-bounce [animation-delay:-0.15s]" />
+              <div className="w-3 h-3 rounded-full bg-[#DB2777] animate-bounce" />
+            </div>
+            <p className="text-xs font-bold text-neutral-400">در حال بررسی وضعیت ورود...</p>
           </div>
         )}
 
@@ -569,76 +666,74 @@ export default function Auth() {
             STEP 1: EMAIL ONLY
             ============================================ */}
         {step === 'email' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white">
-            <div className="space-y-6">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
-                  title="بازگشت به لیست"
-                >
-                  <Home className="w-5 h-5" />
-                </button>
-                <span className="text-xs font-black text-neutral-800">ورود یا ثبت سالن</span>
-                <div className="w-5" />
-              </div>
-
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">ایمیل خود را وارد کنید</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold leading-relaxed">
-                  کد تأیید به ایمیل شما ارسال می‌شود. اگر قبلاً ثبت‌نام کرده باشید وارد پروفایل خود می‌شوید، در غیر این صورت حساب جدید ساخته می‌شود.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-[#EC4899]" />
-                    <span>آدرس ایمیل</span>
-                  </label>
-                  <input
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    placeholder="مثال: sara@gmail.com"
-                    className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr"
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      setError('');
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSendOtp();
-                    }}
-                  />
-                </div>
-
-                {errorBox}
-              </div>
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white min-h-[600px] text-right" dir="rtl">
+            {/* Top Bar Navigation */}
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="p-1.5 text-neutral-400 hover:text-neutral-700 transition-all rounded-full hover:bg-neutral-50"
+                title="بازگشت به لیست"
+              >
+                <Home className="w-5 h-5" />
+              </button>
+              <div className="w-5" />
             </div>
 
-            <div className="pb-4 space-y-3">
+            {/* Centered Email Form Input */}
+            <div className="my-auto space-y-3 w-full max-w-sm mx-auto pt-8 pb-12">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-neutral-800 flex items-center justify-start gap-1 text-right">
+                  <span>ایمیل</span>
+                  <span className="text-[#DB2777] font-bold">*</span>
+                </label>
+                <input
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  placeholder="ایمیل خود را وارد کنید."
+                  className="w-full px-5 py-4 bg-white border border-neutral-200 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-right dir-rtl"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSendOtp();
+                  }}
+                />
+              </div>
+
+              {errorBox}
+            </div>
+
+            {/* Bottom Actions & Terms Notice */}
+            <div className="space-y-3.5 pb-2 w-full max-w-sm mx-auto">
+              {/* Terms & Privacy Notice */}
+              <p className="text-[11px] text-neutral-400 font-normal text-center leading-relaxed px-1">
+                ورود یا ثبت نام به معنای پذیرش{' '}
+                <span className="text-[#DB2777] font-bold cursor-pointer hover:underline">
+                  قوانین و حریم خصوصی
+                </span>{' '}
+                این اپلیکیشن می‌باشد.
+              </p>
+
+              {/* Main Submit Button */}
               <button
                 type="button"
                 onClick={handleSendOtp}
                 disabled={loading}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm disabled:opacity-60"
               >
-                {loading ? 'در حال ارسال کد...' : 'ارسال کد تأیید'}
+                {loading ? 'در حال ارسال کد...' : 'ورود'}
               </button>
 
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-neutral-200" />
-                <span className="text-[10px] font-bold text-neutral-400">یا</span>
-                <div className="flex-1 h-px bg-neutral-200" />
-              </div>
-
+              {/* Google Sign In Option */}
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={loading}
-                className="w-full py-3.5 bg-white hover:bg-neutral-50 text-neutral-700 text-xs font-bold rounded-[18px] text-center transition-all cursor-pointer border border-neutral-200 flex items-center justify-center gap-2 disabled:opacity-60"
+                className="w-full py-3 bg-neutral-50 hover:bg-neutral-100 text-neutral-600 text-xs font-semibold rounded-full text-center transition-all cursor-pointer border border-neutral-200 flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z" />
@@ -656,9 +751,69 @@ export default function Auth() {
             STEP 2: OTP CODE
             ============================================ */}
         {step === 'otp' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white">
-            <div className="space-y-6">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white min-h-[600px] text-right" dir="rtl">
+            {/* Top Bar Navigation */}
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('email');
+                  setOtpCode('');
+                  setError('');
+                }}
+                className="p-1.5 text-neutral-400 hover:text-neutral-700 transition-all rounded-full hover:bg-neutral-50"
+                title="تغییر ایمیل"
+              >
+                <ArrowRight className="w-5 h-5" />
+              </button>
+              <div className="w-5" />
+            </div>
+
+            {/* Centered OTP Form Input */}
+            <div className="my-auto space-y-3 w-full max-w-sm mx-auto pt-8 pb-12">
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-neutral-800 flex items-center justify-start gap-1 text-right">
+                  <span>کد تأیید</span>
+                  <span className="text-[#DB2777] font-bold">*</span>
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={10}
+                  placeholder="کد تأیید را وارد کنید."
+                  className="w-full px-5 py-4 bg-white border border-neutral-200 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-center dir-ltr tracking-widest"
+                  value={otpCode}
+                  onChange={(e) => {
+                    setOtpCode(e.target.value.replace(/[^0-9۰-۹]/g, '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))));
+                    setError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleVerifyOtp();
+                  }}
+                />
+              </div>
+
+              {demoCode && (
+                <div className="bg-amber-50 text-amber-600 px-4 py-3 rounded-[16px] text-[11px] font-bold border border-amber-100 text-right leading-relaxed">
+                  حالت دمو (بدون اتصال سرور): کد تأیید شما <span className="font-mono text-sm tracking-widest">{demoCode}</span> است.
+                </div>
+              )}
+
+              {errorBox}
+
+              <div className="flex items-center justify-between text-[11px] font-bold pt-1">
+                <button
+                  type="button"
+                  disabled={resendCooldown > 0 || loading}
+                  onClick={handleSendOtp}
+                  className="text-[#DB2777] disabled:text-neutral-300 transition-all cursor-pointer disabled:cursor-default"
+                >
+                  {resendCooldown > 0
+                    ? `ارسال مجدد کد تا ${resendCooldown.toLocaleString('fa-IR')} ثانیه دیگر`
+                    : 'ارسال مجدد کد'}
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -666,86 +821,20 @@ export default function Auth() {
                     setOtpCode('');
                     setError('');
                   }}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
+                  className="text-neutral-400 hover:text-neutral-600 transition-all cursor-pointer"
                 >
-                  <ArrowRight className="w-5 h-5" />
+                  تغییر ایمیل
                 </button>
-                <span className="text-xs font-black text-neutral-800">تأیید ایمیل</span>
-                <div className="w-5" />
-              </div>
-
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">کد تأیید را وارد کنید</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold leading-relaxed">
-                  کد تأیید به <span className="font-mono text-[#EC4899] dir-ltr inline-block">{email}</span> ارسال شد.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                    <KeyRound className="w-3.5 h-3.5 text-[#EC4899]" />
-                    <span>کد تأیید</span>
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={10}
-                    placeholder="••••••••"
-                    className="w-full px-4 py-4 bg-neutral-50 border border-neutral-200 rounded-[16px] text-lg font-black tracking-[0.3em] focus:outline-none focus:border-[#EC4899] text-center dir-ltr"
-                    value={otpCode}
-                    onChange={(e) => {
-                      setOtpCode(e.target.value.replace(/[^0-9۰-۹]/g, '').replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d))));
-                      setError('');
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleVerifyOtp();
-                    }}
-                  />
-                </div>
-
-                {demoCode && (
-                  <div className="bg-amber-50 text-amber-600 px-4 py-3 rounded-[16px] text-[11px] font-bold border border-amber-100 text-right leading-relaxed">
-                    حالت دمو (بدون اتصال سرور): کد تأیید شما <span className="font-mono text-sm tracking-widest">{demoCode}</span> است.
-                  </div>
-                )}
-
-                {errorBox}
-
-                <div className="flex items-center justify-between text-[11px] font-bold">
-                  <button
-                    type="button"
-                    disabled={resendCooldown > 0 || loading}
-                    onClick={handleSendOtp}
-                    className="text-[#EC4899] disabled:text-neutral-300 transition-all cursor-pointer disabled:cursor-default"
-                  >
-                    {resendCooldown > 0
-                      ? `ارسال مجدد کد تا ${resendCooldown.toLocaleString('fa-IR')} ثانیه دیگر`
-                      : 'ارسال مجدد کد'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStep('email');
-                      setOtpCode('');
-                      setError('');
-                    }}
-                    className="text-neutral-400 hover:text-neutral-600 transition-all cursor-pointer"
-                  >
-                    تغییر ایمیل
-                  </button>
-                </div>
               </div>
             </div>
 
-            <div className="pb-4">
+            {/* Bottom Action Button */}
+            <div className="space-y-3.5 pb-2 w-full max-w-sm mx-auto">
               <button
                 type="button"
                 onClick={handleVerifyOtp}
                 disabled={loading}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm disabled:opacity-60"
               >
                 {loading ? 'در حال بررسی کد...' : 'تأیید و ادامه'}
               </button>
@@ -754,156 +843,170 @@ export default function Auth() {
         )}
 
         {/* ============================================
-            STEP 3: PROFILE BASICS (NAME, CITY, ADDRESS, AVATAR)
+            STEP 3: PROFILE BASICS (SALON NAME, MOBILE, CITY, INSTAGRAM)
             ============================================ */}
         {step === 'profile' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
-            <div className="space-y-5">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <div className="w-5" />
-                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۱ از ۳: اطلاعات سالن
-                </div>
-                <div className="w-5" />
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white overflow-y-auto no-scrollbar text-right" dir="rtl">
+            <div className="space-y-4 w-full max-w-sm mx-auto">
+              {/* Header Pill Box */}
+              <div className="bg-white border border-neutral-200/80 rounded-[28px] py-4 px-6 text-center shadow-2xs">
+                <h2 className="text-base sm:text-lg font-bold text-neutral-900">ثبت‌نام</h2>
+                <p className="text-xs text-neutral-400 font-normal mt-1">لطفا اطلاعات زیر را تکمیل نمایید</p>
               </div>
 
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">تکمیل اطلاعات سالن</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold">
-                  این اطلاعات در صفحه عمومی ویترین شما نمایش داده می‌شود.
-                </p>
-              </div>
-
-              {/* Avatar Selector */}
-              <div className="flex flex-col items-center justify-center py-2">
-                {techInfo.avatar_url ? (
-                  <div className="relative">
-                    <div className="w-28 h-28 rounded-full overflow-hidden border-2 border-[#EC4899] p-0.5">
-                      <img src={techInfo.avatar_url} alt="Profile" className="w-full h-full object-cover rounded-full" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setTechInfo(prev => ({ ...prev, avatar_url: '' }))}
-                      className="absolute top-0 left-0 bg-white text-neutral-700 rounded-full p-1 shadow border border-neutral-200"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="w-28 h-28 border-2 border-dashed border-[#EC4899] bg-pink-50/20 hover:bg-pink-50/50 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all">
-                    <Plus className="w-7 h-7 text-[#EC4899]" />
-                    <span className="text-[10px] font-bold text-[#EC4899] mt-1">عکس پروفایل</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => handleAvatarUpload(e.target.files?.[0] || null)}
-                    />
+              {/* Main Card Container */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] sm:rounded-[32px] p-5 sm:p-6 space-y-4">
+                {/* Salon / Tech Name */}
+                <div className="space-y-1.5">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center justify-start gap-1">
+                    <span>نام آرایشگاه</span>
+                    <span className="text-[#DB2777] font-bold">*</span>
                   </label>
-                )}
-                {uploadingAvatar && (
-                  <div className="text-[10px] text-[#EC4899] font-bold text-center mt-2 animate-pulse">
-                    در حال آپلود...
-                  </div>
-                )}
-              </div>
+                  <input
+                    type="text"
+                    placeholder="نام آرایشگاه را وارد کنید."
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-right dir-rtl"
+                    value={techInfo.name || ''}
+                    onChange={(e) => {
+                      setTechInfo(prev => ({ ...prev, name: e.target.value }));
+                      setError('');
+                    }}
+                  />
+                </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-neutral-700 flex items-center gap-1">
-                  <span>نام سالن یا ناخن‌کار</span>
-                  <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="مثال: سالن زیبایی سارا نیلز"
-                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-right"
-                  value={techInfo.name || ''}
-                  onChange={(e) => {
-                    setTechInfo(prev => ({ ...prev, name: e.target.value }));
-                    setError('');
-                  }}
-                />
-              </div>
+                {/* Mobile / Phone Number */}
+                <div className="space-y-1.5">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center justify-start gap-1">
+                    <span>شماره موبایل</span>
+                    <span className="text-[#DB2777] font-bold">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    placeholder="مثال: ۰۹۲۲۶۰۷۹۴۷۶"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-right dir-ltr"
+                    value={techInfo.whatsapp || ''}
+                    onChange={(e) => {
+                      setTechInfo(prev => ({ ...prev, whatsapp: e.target.value }));
+                      setError('');
+                    }}
+                  />
+                  <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={hasWhatsapp}
+                      onChange={(e) => setHasWhatsapp(e.target.checked)}
+                      className="w-4 h-4 accent-[#DB2777] rounded cursor-pointer shrink-0"
+                    />
+                    <span className="text-xs text-neutral-600 font-medium">این شماره دارای واتس‌اپ می‌باشد و می‌خواهم متصل شود</span>
+                  </label>
+                </div>
 
-              {/* City Selection Input */}
-              <div className="space-y-1.5 relative">
-                <label className="text-neutral-700 text-xs font-bold flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-[#EC4899]" />
-                  <span>شهر محل فعالیت</span>
-                  <span className="text-red-500">*</span>
-                </label>
-                <button
-                  type="button"
-                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] transition-all flex justify-between items-center text-right cursor-pointer"
-                  onClick={() => setShowCityDropdown(!showCityDropdown)}
-                >
-                  <span className="text-neutral-900">{techInfo.city || 'انتخاب شهر'}</span>
-                  <ChevronDown className="w-4 h-4 text-neutral-400 shrink-0" />
-                </button>
+                {/* City Dropdown */}
+                <div className="space-y-1.5 relative">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center justify-start gap-1">
+                    <span>شهر</span>
+                    <span className="text-[#DB2777] font-bold">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 flex justify-between items-center text-right cursor-pointer focus:outline-none focus:border-[#DB2777]"
+                    onClick={() => setShowCityDropdown(!showCityDropdown)}
+                  >
+                    <ChevronDown className="w-5 h-5 text-neutral-400 shrink-0" />
+                    <span className={techInfo.city ? "text-neutral-800" : "text-neutral-300"}>
+                      {techInfo.city || 'شهری که در آن فعالیت می‌کنید را وارد کنید.'}
+                    </span>
+                  </button>
 
-                {showCityDropdown && (
-                  <div ref={cityDropdownRef} className="absolute z-30 left-0 right-0 mt-2 bg-white rounded-[16px] border border-neutral-200 shadow-xl overflow-hidden flex flex-col max-h-[200px]">
-                    <div className="p-2 border-b border-neutral-100 flex items-center gap-2 bg-neutral-50">
-                      <Search className="w-4 h-4 text-neutral-400 shrink-0" />
-                      <input
-                        type="text"
-                        placeholder="جستجوی شهر..."
-                        className="w-full bg-transparent text-xs outline-none text-right font-semibold py-1"
-                        value={citySearchQuery}
-                        onChange={(e) => setCitySearchQuery(e.target.value)}
-                      />
+                  {showCityDropdown && (
+                    <div ref={cityDropdownRef} className="absolute z-30 left-0 right-0 mt-2 bg-white rounded-[20px] border border-neutral-200 shadow-xl overflow-hidden flex flex-col max-h-[220px]">
+                      <div className="p-3 border-b border-neutral-100 flex items-center gap-2 bg-neutral-50">
+                        <Search className="w-4 h-4 text-neutral-400 shrink-0" />
+                        <input
+                          type="text"
+                          placeholder="جستجوی شهر..."
+                          className="w-full bg-transparent text-xs outline-none text-right font-semibold py-1"
+                          value={citySearchQuery}
+                          onChange={(e) => setCitySearchQuery(e.target.value)}
+                        />
+                      </div>
+                      <div className="overflow-y-auto no-scrollbar flex-1 py-1">
+                        {filteredCities.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            className="w-full px-5 py-3 text-right text-xs hover:bg-pink-50/40 flex justify-between items-center font-semibold"
+                            onClick={() => {
+                              setTechInfo(prev => ({ ...prev, city: c }));
+                              setShowCityDropdown(false);
+                            }}
+                          >
+                            <span className={techInfo.city === c ? "text-[#DB2777] font-bold" : "text-neutral-700"}>{c}</span>
+                            {techInfo.city === c && <Check className="w-4 h-4 text-[#DB2777]" />}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div className="overflow-y-auto no-scrollbar flex-1 py-1">
-                      {filteredCities.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          className="w-full px-4 py-2.5 text-right text-xs hover:bg-pink-50/40 flex justify-between items-center font-semibold"
-                          onClick={() => {
-                            setTechInfo(prev => ({ ...prev, city: c }));
-                            setShowCityDropdown(false);
-                          }}
-                        >
-                          <span className={techInfo.city === c ? "text-[#EC4899] font-bold" : "text-neutral-700"}>{c}</span>
-                          {techInfo.city === c && <Check className="w-3.5 h-3.5 text-[#EC4899]" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
 
-              {/* Address */}
-              <div className="space-y-1.5">
-                <label className="text-neutral-700 text-xs font-bold flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-[#EC4899]" />
-                  <span>آدرس سالن</span>
-                  <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="مثال: تهران، سعادت‌آباد، خیابان سرو غربی، پلاک ۱۲"
-                  className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-right resize-none"
-                  value={techInfo.address || ''}
-                  onChange={(e) => {
-                    setTechInfo(prev => ({ ...prev, address: e.target.value }));
-                    setError('');
-                  }}
-                />
+                {/* Instagram Handle */}
+                <div className="space-y-1.5">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center justify-start gap-1">
+                    <span>آیدی اینستاگرام</span>
+                    <span className="text-[#DB2777] font-bold">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="مثال: salon_esmet"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-left dir-ltr"
+                    value={techInfo.instagram || ''}
+                    onChange={(e) => {
+                      const val = e.target.value.replace('@', '').trim();
+                      setTechInfo(prev => ({ ...prev, instagram: val }));
+                      setError('');
+                    }}
+                  />
+                </div>
+
+                {/* Custom Username / URL Slug */}
+                <div className="space-y-1.5">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <span>نام کاربری / آدرس اختصاصی (URL)</span>
+                      <span className="text-[#DB2777] font-bold">*</span>
+                    </span>
+                    <span className="text-[10px] text-neutral-400 font-normal">انگلیسی</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="مثال: maral_nails"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] focus:ring-1 focus:ring-[#DB2777] transition-all text-left dir-ltr"
+                    value={techInfo.slug || ''}
+                    onChange={(e) => {
+                      const val = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '').trim();
+                      setTechInfo(prev => ({ ...prev, slug: val, username: val }));
+                      setError('');
+                    }}
+                  />
+                  <p className="text-[11px] font-medium text-neutral-500 text-right">
+                    آدرس لینک اختصاصی ویترین شما: <span className="text-[#DB2777] font-bold dir-ltr inline-block">vitrin.ir/vitrin/{techInfo.slug || slugFromEmail(email) || 'username'}</span>
+                  </p>
+                </div>
               </div>
 
               {noticeBox}
               {errorBox}
             </div>
 
-            <div className="pb-4 pt-4">
+            {/* Bottom Submit Button */}
+            <div className="pb-2 pt-4 w-full max-w-sm mx-auto">
               <button
                 type="button"
                 onClick={handleProfileNext}
-                disabled={uploadingAvatar}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm"
               >
-                مرحله بعد: شبکه‌های اجتماعی
+                مرحله بعد
               </button>
             </div>
           </div>
@@ -913,90 +1016,41 @@ export default function Auth() {
             STEP 4: SOCIAL LINKS (OPTIONAL)
             ============================================ */}
         {step === 'socials' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
-            <div className="space-y-5">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <button
-                  type="button"
-                  onClick={() => setStep('profile')}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
-                >
-                  <ArrowRight className="w-5 h-5" />
-                </button>
-
-                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۲ از ۳: اطلاعات ارتباطی
-                </div>
-
-                <div className="w-5" />
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white overflow-y-auto no-scrollbar text-right" dir="rtl">
+            <div className="space-y-4 w-full max-w-sm mx-auto">
+              {/* Header Pill Box */}
+              <div className="bg-white border border-neutral-200/80 rounded-[28px] py-4 px-6 text-center shadow-2xs">
+                <h2 className="text-base sm:text-lg font-bold text-neutral-900">اطلاعات تکمیلی</h2>
+                <p className="text-xs text-neutral-400 font-normal mt-1">افزودن شبکه‌های اجتماعی و آدرس (اختیاری)</p>
               </div>
 
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">شبکه‌های اجتماعی</h2>
-                <p className="text-xs text-neutral-400 mt-1 font-semibold">
-                  مشتریان از طریق این آیدی‌ها با سالن شما ارتباط می‌گیرند. (اختیاری)
-                </p>
-              </div>
-
-              {/* Instagram Handle Input */}
-              <div className="space-y-1.5">
-                <label className="text-neutral-700 text-xs font-bold flex items-center gap-1">
-                  <Instagram className="w-3.5 h-3.5 text-[#EC4899]" />
-                  <span>آیدی اینستاگرام</span>
-                </label>
-                <div className="relative flex items-center">
-                  <input
-                    type="text"
-                    placeholder="مثال: sara_nailart"
-                    className="w-full px-4 py-3.5 bg-neutral-50 border border-neutral-200 rounded-[16px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr pl-24"
-                    value={techInfo.instagram || ''}
-                    onChange={(e) => {
-                      const val = e.target.value.replace('@', '').trim();
-                      setTechInfo(prev => ({ ...prev, instagram: val }));
-                    }}
-                  />
-
-                  {techInfo.instagram && isValidInstagramHandle(techInfo.instagram) && (
-                    <a
-                      href={`https://instagram.com/${techInfo.instagram}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="absolute left-2.5 px-2.5 py-1.5 bg-pink-50 text-[#EC4899] rounded-lg text-[10px] font-bold border border-pink-100 flex items-center gap-1 hover:bg-pink-100 transition-all"
-                    >
-                      <ExternalLink className="w-3 h-3" />
-                      <span>پیش‌نمایش</span>
-                    </a>
-                  )}
-                </div>
-              </div>
-
-              {/* Optional WhatsApp / Telegram */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Main Card Container */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] sm:rounded-[32px] p-5 sm:p-6 space-y-4">
+                {/* Telegram ID */}
                 <div className="space-y-1.5">
-                  <label className="text-neutral-700 text-[11px] font-bold flex items-center gap-1">
-                    <MessageCircle className="w-3.5 h-3.5 text-green-600" />
-                    <span>شماره واتس‌اپ</span>
-                  </label>
-                  <input
-                    type="tel"
-                    placeholder="۰۹۱۲..."
-                    className="w-full px-3.5 py-3 bg-neutral-50 border border-neutral-200 rounded-[14px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr"
-                    value={techInfo.whatsapp || ''}
-                    onChange={(e) => setTechInfo(prev => ({ ...prev, whatsapp: e.target.value }))}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-neutral-700 text-[11px] font-bold flex items-center gap-1">
-                    <Send className="w-3.5 h-3.5 text-blue-500" />
-                    <span>آیدی تلگرام</span>
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 block">
+                    آیدی تلگرام
                   </label>
                   <input
                     type="text"
-                    placeholder="آیدی تلگرام"
-                    className="w-full px-3.5 py-3 bg-neutral-50 border border-neutral-200 rounded-[14px] text-xs font-semibold focus:outline-none focus:border-[#EC4899] text-left dir-ltr"
+                    placeholder="مثال: salon_id"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] text-left dir-ltr"
                     value={techInfo.telegram || ''}
                     onChange={(e) => setTechInfo(prev => ({ ...prev, telegram: e.target.value }))}
+                  />
+                </div>
+
+                {/* Address */}
+                <div className="space-y-1.5">
+                  <label className="text-xs sm:text-sm font-bold text-neutral-800 block">
+                    آدرس سالن
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="مثال: تهران، سعادت‌آباد، خیابان سرو غربی، پلاک ۱۲"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] text-right resize-none"
+                    value={techInfo.address || ''}
+                    onChange={(e) => setTechInfo(prev => ({ ...prev, address: e.target.value }))}
                   />
                 </div>
               </div>
@@ -1005,11 +1059,12 @@ export default function Auth() {
               {errorBox}
             </div>
 
-            <div className="pb-4 pt-4">
+            {/* Bottom Button */}
+            <div className="pb-2 pt-4 w-full max-w-sm mx-auto">
               <button
                 type="button"
                 onClick={() => setStep('works')}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm"
               >
                 مرحله بعد: افزودن نمونه‌کارها
               </button>
@@ -1021,138 +1076,221 @@ export default function Auth() {
             STEP 5: UPLOADING WORKS
             ============================================ */}
         {step === 'works' && (
-          <div className="flex-1 flex flex-col justify-between p-6 bg-white overflow-y-auto no-scrollbar">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
-                <button
-                  type="button"
-                  onClick={() => setStep('socials')}
-                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all"
-                >
-                  <ArrowRight className="w-5 h-5" />
-                </button>
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white overflow-y-auto no-scrollbar text-right" dir="rtl">
+            <div className="space-y-4 w-full max-w-sm mx-auto">
+              {/* Card container for sample works */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] sm:rounded-[32px] p-5 sm:p-6 space-y-4">
+                <label className="text-sm font-bold text-neutral-800 block text-right">
+                  نمونه‌کار <span className="text-[#DB2777]">*</span>
+                </label>
 
-                <div className="bg-pink-50 text-[#EC4899] px-3 py-1 rounded-full text-[10px] font-bold border border-pink-100/40">
-                  مرحله ۳ از ۳: افزودن نمونه‌کارها
-                </div>
-
-                <div className="w-5" />
-              </div>
-
-              <div>
-                <h2 className="text-lg font-bold text-neutral-900">ثبت کارهای شما</h2>
-                <p className="text-xs text-neutral-400 mt-0.5 font-semibold">
-                  حداقل ۱ الی ۳ نمونه‌کار عالی از کارهای خود ثبت کنید.
-                </p>
-              </div>
-
-              {/* Design list */}
-              {designs.length > 0 && (
-                <div className="space-y-2.5">
-                  {designs.map((item) => (
-                    <div key={item.id} className="bg-neutral-50 border border-neutral-200 rounded-[16px] p-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
+                {/* List of added works */}
+                {designs.length > 0 && (
+                  <div className="space-y-3">
+                    {designs.map((item) => (
+                      <div key={item.id} className="bg-white border border-neutral-200/80 rounded-[20px] p-3.5 flex items-center justify-between gap-3 shadow-2xs">
                         <img
                           src={item.image_url}
                           alt={item.title}
-                          className="w-12 h-12 rounded-[12px] object-cover shrink-0 border border-neutral-200"
+                          className="w-16 h-16 rounded-[16px] object-cover bg-neutral-100 border border-neutral-200/60 shrink-0"
                         />
-                        <div className="min-w-0 text-right">
+                        <div className="min-w-0 text-right flex-1 space-y-1">
                           <h4 className="text-xs font-bold text-neutral-800 truncate">{item.title}</h4>
-                          <p className="text-[10px] text-neutral-400 font-medium mt-0.5">
-                            ⏱️ {item.duration} دقیقه • {item.price.toLocaleString('fa-IR')} تومان
+                          <span className="inline-block bg-neutral-100 text-neutral-600 px-2.5 py-0.5 rounded-full text-[10px] font-medium">
+                            {item.duration} دقیقه
+                          </span>
+                          <p className="text-xs font-bold text-[#DB2777]">
+                            {item.price.toLocaleString('fa-IR')} تومان
                           </p>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setDesigns(prev => prev.filter(d => d.id !== item.id))}
+                          className="p-2 text-neutral-400 hover:text-red-500 shrink-0 cursor-pointer"
+                          title="حذف نمونه‌کار"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
+                    ))}
+                  </div>
+                )}
 
-                      <button
-                        type="button"
-                        onClick={() => setDesigns(prev => prev.filter(d => d.id !== item.id))}
-                        className="p-2 text-neutral-400 hover:text-red-500 shrink-0"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {/* Big Dashed Pink Button for Adding Work Sample */}
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(true)}
+                  className="w-full border-2 border-dashed border-[#DB2777] bg-white rounded-[24px] py-8 px-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-pink-50/20 transition-all text-[#DB2777]"
+                >
+                  <Plus className="w-8 h-8 text-[#DB2777]" />
+                  <span className="text-xs font-bold">افزودن نمونه‌کار</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={() => setShowAddModal(true)}
-                className="w-full py-4 bg-pink-50/50 hover:bg-pink-100/50 border border-dashed border-[#EC4899] rounded-[16px] flex items-center justify-center gap-2 text-[#EC4899] text-xs font-bold transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ افزودن نمونه‌کار جدید</span>
-              </button>
+                <p className="text-xs text-neutral-400 font-normal text-center pt-1">
+                  حداقل باید سه نمونه‌کار وارد کنید.
+                </p>
+              </div>
 
               {noticeBox}
               {errorBox}
             </div>
 
-            <div className="pb-4 pt-4">
+            {/* Bottom Action Button */}
+            <div className="pb-2 pt-4 w-full max-w-sm mx-auto">
               <button
                 type="button"
-                onClick={handleFinalSubmit}
+                onClick={handleWorksNext}
                 disabled={loading || uploadingDesign}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md disabled:opacity-60"
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm disabled:opacity-60"
               >
-                {loading ? 'در حال ثبت نهایی ویترین...' : 'تکمیل و ساخت ویترین'}
+                مرحله بعد: عکس پروفایل
               </button>
             </div>
           </div>
         )}
 
         {/* ============================================
-            STEP 6: READY CONGRATS & SHARE LINK
+            STEP 6: PROFILE PICTURE (AVATAR)
             ============================================ */}
-        {step === 'ready' && (
-          <div className="flex-1 flex flex-col justify-between p-8 bg-white text-center">
-            <div className="pt-6">
-              <div className="w-20 h-20 rounded-full bg-pink-50 text-[#EC4899] mx-auto flex items-center justify-center border border-pink-100 mb-4">
-                <Sparkles className="w-10 h-10 animate-pulse" />
+        {step === 'avatar' && (
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white overflow-y-auto no-scrollbar text-right" dir="rtl">
+            <div className="my-auto space-y-6 w-full max-w-sm mx-auto text-center">
+              {/* Title & Subtitle */}
+              <div className="space-y-1">
+                <h2 className="text-lg sm:text-xl font-bold text-neutral-900">عکس پروفایل</h2>
+                <p className="text-xs text-neutral-400 font-normal">لطفاً عکس پروفایل خود را وارد کنید.</p>
               </div>
 
-              <h2 className="text-xl font-black text-neutral-900">ویترین شما آماده است!</h2>
-              <p className="text-xs text-neutral-500 font-semibold mt-2 leading-relaxed">
-                ویترین آنلاین شما با موفقیت ساخته شد. می‌توانید لینک اختصاصی زیر را کپی کرده و در بیو اینستاگرام خود قرار دهید.
-              </p>
+              {/* Dashed Circular Image Uploader */}
+              <div className="flex flex-col items-center justify-center py-2 space-y-3">
+                {techInfo.avatar_url ? (
+                  <div className="relative">
+                    <div className="w-44 h-44 rounded-full overflow-hidden border-2 border-[#DB2777] p-1 bg-white shadow-sm">
+                      <img src={techInfo.avatar_url} alt="Profile" className="w-full h-full object-cover rounded-full" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTechInfo(prev => ({ ...prev, avatar_url: '' }))}
+                      className="absolute top-2 left-2 bg-white text-neutral-700 rounded-full p-2 shadow border border-neutral-200 cursor-pointer hover:bg-neutral-50"
+                      title="حذف عکس"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label 
+                    onPaste={(e) => {
+                      const file = getPastedImageFile(e);
+                      if (file) {
+                        e.preventDefault();
+                        handleAvatarUpload(file);
+                      }
+                    }}
+                    className="w-44 h-44 border-2 border-dashed border-[#DB2777] bg-pink-50/20 hover:bg-pink-50/40 rounded-full flex flex-col items-center justify-center cursor-pointer transition-all space-y-1"
+                  >
+                    <Plus className="w-8 h-8 text-[#DB2777]" />
+                    <span className="text-[11px] font-bold text-[#DB2777]">انتخاب یا آپلود عکس</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleAvatarUpload(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handlePasteFromClipboardClick('avatar')}
+                  className="text-xs font-bold text-[#DB2777] bg-pink-50/80 hover:bg-pink-100/80 px-3.5 py-1.5 rounded-full border border-pink-200/80 flex items-center gap-1.5 cursor-pointer transition-all"
+                >
+                  <Clipboard className="w-3.5 h-3.5 text-[#DB2777]" />
+                  <span>چسباندن عکس با Ctrl + V</span>
+                </button>
+              </div>
+
+              {uploadingAvatar && (
+                <p className="text-xs text-[#DB2777] font-bold text-center animate-pulse">
+                  در حال آپلود عکس...
+                </p>
+              )}
+
+              {noticeBox}
+              {errorBox}
             </div>
 
-            {/* Share Link Card */}
-            <div className="bg-neutral-50 border border-neutral-200 rounded-[20px] p-4 text-center space-y-3 my-4">
-              <span className="text-[11px] font-bold text-neutral-400 block">لینک اختصاصی ویترین شما</span>
+            {/* Bottom Action Button in exact same place & style */}
+            <div className="pb-2 pt-4 w-full max-w-sm mx-auto">
+              <button
+                type="button"
+                onClick={handleFinalSubmit}
+                disabled={loading || uploadingAvatar}
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm disabled:opacity-60"
+              >
+                {loading
+                  ? 'در حال راه‌اندازی ویترین...'
+                  : techInfo.avatar_url
+                  ? 'ثبت و راه‌اندازی ویترین'
+                  : 'رد شدن و راه‌اندازی ویترین'}
+              </button>
+            </div>
+          </div>
+        )}
 
-              <div className="bg-white border border-neutral-200 rounded-xl py-2.5 px-3 text-xs font-mono text-[#EC4899] dir-ltr text-center truncate">
-                {getFullShareUrl()}
+        {/* ============================================
+            STEP 7: READY CONGRATS & SHARE LINK
+            ============================================ */}
+        {step === 'ready' && (
+          <div className="flex-1 flex flex-col justify-between px-6 py-6 bg-white overflow-y-auto no-scrollbar text-right" dir="rtl">
+            <div className="space-y-4 w-full max-w-sm mx-auto my-auto">
+              {/* Header Pill Box / Congrats */}
+              <div className="bg-white border border-neutral-200/80 rounded-[28px] py-8 px-6 text-center shadow-2xs space-y-3">
+                <div className="w-16 h-16 rounded-full bg-pink-50 text-[#DB2777] mx-auto flex items-center justify-center border border-pink-100/80">
+                  <Check className="w-8 h-8 text-[#DB2777]" />
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold text-neutral-900">ویترین شما آماده است!</h2>
+                <p className="text-xs text-neutral-400 font-normal leading-relaxed">
+                  ویترین آنلاین شما با موفقیت ساخته شد. می‌توانید لینک اختصاصی زیر را در بیو اینستاگرام خود قرار دهید.
+                </p>
               </div>
+
+              {/* Share Link Card */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] p-4 text-center space-y-2.5">
+                <span className="text-xs font-bold text-neutral-500 block">لینک اختصاصی ویترین شما</span>
+
+                <div className="bg-white border border-neutral-200 rounded-full py-3 px-4 text-xs font-mono text-[#DB2777] dir-ltr text-center truncate shadow-2xs">
+                  {getFullShareUrl()}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Actions: View Vitrin button first in exact button placement, then Copy Link */}
+            <div className="pb-2 pt-4 w-full max-w-sm mx-auto space-y-3">
+              <button
+                type="button"
+                onClick={() => navigate(`/vitrin/${techInfo.slug || 'profile'}`)}
+                className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] active:scale-[0.99] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-sm"
+              >
+                مشاهده ویترین من
+              </button>
 
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className="w-full py-3 bg-pink-50 hover:bg-pink-100 text-[#EC4899] text-xs font-bold rounded-xl border border-pink-100/50 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                className="w-full py-3.5 bg-neutral-50 hover:bg-neutral-100 text-neutral-700 text-xs font-bold rounded-full border border-neutral-200 flex items-center justify-center gap-2 transition-all cursor-pointer"
               >
                 {copiedLink ? (
                   <>
                     <Check className="w-4 h-4 text-emerald-500" />
-                    <span>لینک کپی شد!</span>
+                    <span className="text-emerald-600 font-bold">لینک کپی شد!</span>
                   </>
                 ) : (
                   <>
-                    <Copy className="w-4 h-4" />
+                    <Copy className="w-4 h-4 text-neutral-500" />
                     <span>کپی لینک اختصاصی</span>
                   </>
                 )}
-              </button>
-            </div>
-
-            <div className="pb-4">
-              <button
-                type="button"
-                onClick={() => navigate(`/vitrin/${techInfo.slug || 'profile'}`)}
-                className="w-full py-4 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-extrabold rounded-[18px] text-center transition-all cursor-pointer shadow-md"
-              >
-                مشاهده ویترین من
               </button>
             </div>
           </div>
@@ -1162,121 +1300,284 @@ export default function Auth() {
             ADD WORK SAMPLE MODAL
             ============================================ */}
         {showAddModal && (
-          <div className="absolute inset-0 bg-black/60 z-50 flex flex-col justify-end">
-            <div className="bg-white rounded-t-[24px] p-6 max-h-[90%] overflow-y-auto no-scrollbar space-y-4">
-              <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
-                <h3 className="text-xs font-extrabold text-neutral-900">افزودن نمونه‌کار جدید</h3>
+          <div className="absolute inset-0 bg-black/50 z-50 flex flex-col justify-end p-0 sm:p-4 text-right" dir="rtl">
+            <div className="bg-white rounded-t-[32px] sm:rounded-[32px] p-5 sm:p-6 max-h-[92vh] overflow-y-auto no-scrollbar space-y-4 w-full max-w-md mx-auto shadow-2xl">
+              {/* Modal Oval Header Bar */}
+              <div className="bg-white border border-neutral-200/80 rounded-full py-3 px-5 flex items-center justify-between shadow-2xs">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="p-1 text-neutral-400 hover:text-neutral-700"
+                  className="p-1 text-neutral-400 hover:text-neutral-700 transition-all rounded-full"
                 >
-                  <X className="w-5 h-5" />
+                  <ArrowRight className="w-5 h-5" />
                 </button>
+                <h3 className="text-sm font-bold text-neutral-900">افزودن نمونه‌کار</h3>
+                <div className="w-5" />
               </div>
 
-              {/* Work image selector */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-neutral-700">تصویر نمونه‌کار</label>
-                {newDesign.image_url ? (
-                  <div className="relative aspect-square max-w-[140px] mx-auto rounded-xl overflow-hidden border border-neutral-200">
-                    <img src={newDesign.image_url} alt="Work" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => setNewDesign(prev => ({ ...prev, image_url: '' }))}
-                      className="absolute top-1.5 left-1.5 bg-white text-neutral-800 rounded-full p-1 shadow"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className="w-full py-8 border-2 border-dashed border-neutral-300 hover:border-[#EC4899] bg-neutral-50 rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all">
-                    <Plus className="w-6 h-6 text-neutral-400" />
-                    <span className="text-[11px] font-bold text-neutral-500 mt-1">انتخاب یا آپلود عکس</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => handleDesignImageUpload(e.target.files?.[0] || null)}
-                    />
+              {/* Section 1: Image Upload Card */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] p-5 text-right space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-neutral-800 block">
+                    عکس نمونه‌کار <span className="text-[#DB2777]">*</span>
                   </label>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => handlePasteFromClipboardClick('design')}
+                    className="text-[11px] font-bold text-[#DB2777] hover:bg-pink-50 px-2.5 py-1 rounded-lg border border-pink-200/60 flex items-center gap-1 cursor-pointer transition-all"
+                  >
+                    <Clipboard className="w-3.5 h-3.5 text-[#DB2777]" />
+                    <span>چسباندن عکس (Ctrl + V)</span>
+                  </button>
+                </div>
+                <div className="flex justify-center py-2">
+                  {newDesign.image_url ? (
+                    <div className="relative w-28 h-28 rounded-[20px] overflow-hidden border border-neutral-200">
+                      <img src={newDesign.image_url} alt="Work" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setNewDesign(prev => ({ ...prev, image_url: '' }))}
+                        className="absolute top-1.5 left-1.5 bg-white text-neutral-700 rounded-full p-1 shadow border border-neutral-200 cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label 
+                      onPaste={(e) => {
+                        const file = getPastedImageFile(e);
+                        if (file) {
+                          e.preventDefault();
+                          handleDesignImageUpload(file);
+                        }
+                      }}
+                      className="w-full py-6 border-2 border-dashed border-[#DB2777] bg-white rounded-[20px] flex flex-col items-center justify-center cursor-pointer hover:bg-pink-50/30 transition-all text-[#DB2777] space-y-1"
+                    >
+                      <Plus className="w-8 h-8 text-[#DB2777]" />
+                      <span className="text-xs font-bold">انتخاب یا آپلود عکس</span>
+                      <span className="text-[10px] font-bold bg-pink-50 px-2.5 py-0.5 rounded-full border border-pink-100/80">
+                        یا عکس را کپی کرده و Ctrl + V بزنید
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleDesignImageUpload(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                  )}
+                </div>
                 {uploadingDesign && (
-                  <div className="text-[10px] text-[#EC4899] font-bold text-center">در حال آپلود...</div>
+                  <div className="text-[11px] text-[#DB2777] font-bold text-center">در حال آپلود عکس...</div>
                 )}
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-neutral-700">عنوان طرح</label>
-                <input
-                  type="text"
-                  placeholder="مثال: کاشت ژل با دیزاین فرنچ"
-                  className="w-full px-4 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right"
-                  value={newDesign.title}
-                  onChange={(e) => setNewDesign(prev => ({ ...prev, title: e.target.value }))}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              {/* Section 2: Details Card (Title, Price, Duration) */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] p-5 space-y-4 text-right">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700">قیمت (تومان)</label>
+                  <label className="text-xs font-bold text-neutral-800 block">
+                    عنوان <span className="text-[#DB2777]">*</span>
+                  </label>
                   <input
                     type="text"
-                    placeholder="۴۵۰,۰۰۰"
-                    className="w-full px-3.5 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-left dir-ltr"
+                    placeholder="مثال: ناخن آمبره قرمز رنگ"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] text-right"
+                    value={newDesign.title}
+                    onChange={(e) => setNewDesign(prev => ({ ...prev, title: e.target.value }))}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-neutral-800 block">
+                    قیمت <span className="text-[#DB2777]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="مثال: ۵۰۰,۰۰۰"
+                    className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 placeholder:text-neutral-300 focus:outline-none focus:border-[#DB2777] text-right dir-ltr"
                     value={newDesign.price}
                     onChange={(e) => setNewDesign(prev => ({ ...prev, price: e.target.value }))}
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700">مدت زمان</label>
-                  <select
-                    className="w-full px-3 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right cursor-pointer"
-                    value={newDesign.duration}
-                    onChange={(e) => setNewDesign(prev => ({ ...prev, duration: e.target.value }))}
-                  >
-                    <option value="۱ ساعت">۱ ساعت</option>
-                    <option value="۱.۵ ساعت">۱.۵ ساعت</option>
-                    <option value="۲ ساعت">۲ ساعت</option>
-                    <option value="۲.۵ ساعت">۲.۵ ساعت</option>
-                    <option value="۳ ساعت">۳ ساعت</option>
-                  </select>
+                  <label className="text-xs font-bold text-neutral-800 block">
+                    مدت‌زمان <span className="text-[#DB2777]">*</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      className="w-full px-5 py-4 bg-white border border-neutral-200/80 rounded-[18px] text-xs sm:text-sm font-medium text-neutral-800 focus:outline-none focus:border-[#DB2777] text-right appearance-none cursor-pointer"
+                      value={newDesign.duration}
+                      onChange={(e) => setNewDesign(prev => ({ ...prev, duration: e.target.value }))}
+                    >
+                      <option value="مدت زمان طراحی را وارد کنید.">مدت زمان طراحی را وارد کنید.</option>
+                      <option value="۱ ساعت">۱ ساعت</option>
+                      <option value="۱.۵ ساعت">۱.۵ ساعت</option>
+                      <option value="۲ ساعت">۲ ساعت</option>
+                      <option value="۲.۵ ساعت">۲.۵ ساعت</option>
+                      <option value="۳ ساعت">۳ ساعت</option>
+                    </select>
+                    <ChevronDown className="w-5 h-5 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                 </div>
               </div>
 
-              {/* Tags Selection */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700">تگ رنگ</label>
-                  <select
-                    className="w-full px-3 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right cursor-pointer"
-                    value={newDesign.colorTag}
-                    onChange={(e) => setNewDesign(prev => ({ ...prev, colorTag: e.target.value }))}
-                  >
-                    {INITIAL_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+              {/* Section 3: Color & Style Tags */}
+              <div className="bg-[#F9F9F9] border border-neutral-200/70 rounded-[28px] p-5 space-y-4 text-right">
+                {/* Color Selection */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-neutral-800 block">
+                      رنگ‌های به کار رفته <span className="text-[#DB2777]">*</span>
+                    </label>
+                    {!showAddColorInput && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddColorInput(true)}
+                        className="text-[11px] font-bold text-[#DB2777] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>افزودن رنگ جدید</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {showAddColorInput && (
+                    <div className="flex items-center gap-1.5 py-1">
+                      <input
+                        type="text"
+                        placeholder="نام رنگ (مثال: شبرنگ، دیسکو)"
+                        className="flex-1 px-3.5 py-2 bg-white border border-pink-200 rounded-xl text-xs font-bold outline-none focus:border-[#DB2777]"
+                        value={newColorInput}
+                        onChange={(e) => setNewColorInput(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddNewColorTag}
+                        className="px-3.5 py-2 bg-[#DB2777] text-white rounded-xl text-xs font-bold cursor-pointer hover:bg-[#BE185D]"
+                      >
+                        ثبت
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddColorInput(false)}
+                        className="p-1.5 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {availableColorOptions.map((c) => {
+                      const active = newDesign.selectedColors.includes(c.name);
+                      return (
+                        <button
+                          key={c.name}
+                          type="button"
+                          onClick={() => {
+                            setNewDesign(prev => ({
+                              ...prev,
+                              selectedColors: active
+                                ? prev.selectedColors.filter(item => item !== c.name)
+                                : [...prev.selectedColors, c.name]
+                            }));
+                          }}
+                          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                            active
+                              ? 'bg-[#DB2777] text-white border-[#DB2777] shadow-2xs font-bold'
+                              : 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50'
+                          }`}
+                        >
+                          <span className={`w-2.5 h-2.5 rounded-full ${c.dotClass}`} />
+                          <span>{c.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-neutral-700">تگ سبک هنری</label>
-                  <select
-                    className="w-full px-3 py-3 bg-neutral-50 border border-neutral-200 rounded-xl text-xs font-semibold outline-none focus:border-[#EC4899] text-right cursor-pointer"
-                    value={newDesign.styleTag}
-                    onChange={(e) => setNewDesign(prev => ({ ...prev, styleTag: e.target.value }))}
-                  >
-                    {INITIAL_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                {/* Style Selection */}
+                <div className="space-y-2 pt-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-bold text-neutral-800 block">
+                      سبک‌های طرح <span className="text-[#DB2777]">*</span>
+                    </label>
+                    {!showAddStyleInput && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddStyleInput(true)}
+                        className="text-[11px] font-bold text-[#DB2777] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>افزودن سبک جدید</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {showAddStyleInput && (
+                    <div className="flex items-center gap-1.5 py-1">
+                      <input
+                        type="text"
+                        placeholder="نام سبک (مثال: هلویی، کروم، ژلیش)"
+                        className="flex-1 px-3.5 py-2 bg-white border border-pink-200 rounded-xl text-xs font-bold outline-none focus:border-[#DB2777]"
+                        value={newStyleInput}
+                        onChange={(e) => setNewStyleInput(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddNewStyleTag}
+                        className="px-3.5 py-2 bg-[#DB2777] text-white rounded-xl text-xs font-bold cursor-pointer hover:bg-[#BE185D]"
+                      >
+                        ثبت
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddStyleInput(false)}
+                        className="p-1.5 text-neutral-400 hover:text-neutral-700 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {availableStyleTags.map((st) => {
+                      const active = newDesign.selectedStyles.includes(st);
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => {
+                            setNewDesign(prev => ({
+                              ...prev,
+                              selectedStyles: active
+                                ? prev.selectedStyles.filter(item => item !== st)
+                                : [...prev.selectedStyles, st]
+                            }));
+                          }}
+                          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
+                            active
+                              ? 'bg-[#DB2777] text-white border-[#DB2777] shadow-2xs font-bold'
+                              : 'bg-white border-neutral-200 text-neutral-700 hover:bg-neutral-50'
+                          }`}
+                        >
+                          <span>{st}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
+              {/* Submit Button */}
               <div className="pt-2">
                 <button
                   type="button"
                   onClick={handleAddWorkSample}
-                  className="w-full py-3.5 bg-[#EC4899] hover:bg-[#DB2777] text-white text-xs font-bold rounded-xl text-center"
+                  className="w-full py-4 bg-[#DB2777] hover:bg-[#BE185D] text-white text-sm font-bold rounded-full text-center transition-all cursor-pointer shadow-2xs"
                 >
-                  ثبت این نمونه‌کار
+                  افزودن نمونه‌کار
                 </button>
               </div>
             </div>
