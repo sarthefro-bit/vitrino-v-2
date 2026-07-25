@@ -219,7 +219,7 @@ export default function Auth() {
   const [copiedLink, setCopiedLink] = useState(false);
 
   // Live clock
-  const [currentTime, setCurrentTime] = useState("09:41");
+  const [, setCurrentTime] = useState("09:41");
 
   // Route an authenticated email to the right destination:
   // existing profile -> their vitrin, new user -> profile completion

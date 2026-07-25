@@ -29,7 +29,7 @@ export default function TechList() {
   const [bookingTech, setBookingTech] = useState<NailTech | null>(null);
   const [copiedNotice, setCopiedNotice] = useState(false);
 
-  const [currentTime, setCurrentTime] = useState("09:41");
+  const [, setCurrentTime] = useState("09:41");
 
   useEffect(() => {
     const updateTime = () => {
